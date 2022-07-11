@@ -1,4 +1,4 @@
-use std::{cell::RefCell, fs::File, ops::ControlFlow, rc::Rc, str::FromStr};
+use std::{cell::{RefCell, Cell}, fs::File, ops::ControlFlow, rc::Rc, str::FromStr};
 
 use gtk::{
     gdk::EventMask,
@@ -21,76 +21,72 @@ struct Config {
     width: u32,
     height: u32,
     max_iterations: u32,
-    filename: Option<String>,
-    xrange: (f64, f64),
-    yrange: (f64, f64),
-    gui: bool,
+    center: (f64, f64),
+    zoom: f64,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
-            width: Default::default(),
-            height: Default::default(),
-            max_iterations: Default::default(),
-            filename: Default::default(),
-            xrange: (-0.125, 0.125),
-            yrange: (0.75, 1.0),
-            gui: false,
+            width: 512,
+            height: 512,
+            max_iterations: 1000,
+            center: (0.0, -0.875),
+            zoom: 2048.0,
         }
     }
 }
 
-impl Config {
-    fn parse() -> Result<Self, String> {
-        let mut config = Config::default();
-        let mut args = std::env::args();
-        let _executable = args.next();
-        while let Some(arg) = args.next() {
-            match &*arg {
-                "-g" | "--gui" => {
-                    config.gui = true;
-                }
-                "-o" => {
-                    config.filename = Some(unwrap_or!(
-                        args.next(),
-                        return Err(format!("Expected argument for -o option")),
-                    ));
-                }
-                "-i" => {
-                    let iterations = unwrap_or!(
-                        args.next(),
-                        return Err(format!("Expected argument for -o option")),
-                    );
-                    config.max_iterations = unwrap_or!(
-                        iterations.parse::<u32>(),
-                        return Err(format!("Invalid number of iterations: {e:?}")),
-                        with_error(e)
-                    );
-                }
-                arg if arg.contains('x') => {
-                    let idx = arg.find("x").expect("contains 'x'");
-                    let (w, h) = arg.split_at(idx);
-                    let h = &h[1..];
-                    let w = unwrap_or!(
-                        w.parse::<u32>(),
-                        return Err(format!("Invalid width: {w:?}")),
-                    );
-                    let h = unwrap_or!(
-                        h.parse::<u32>(),
-                        return Err(format!("Invalid height: {h:?}")),
-                    );
-                    config.width = w;
-                    config.height = h;
-                }
-                _ => {
-                    return Err(format!("Unexpected argument: {arg:?}"));
-                }
-            }
-        }
-        Ok(config)
-    }
-}
+// impl Config {
+//     fn parse() -> Result<Self, String> {
+//         let mut config = Config::default();
+//         let mut args = std::env::args();
+//         let _executable = args.next();
+//         while let Some(arg) = args.next() {
+//             match &*arg {
+//                 "-g" | "--gui" => {
+//                     config.gui = true;
+//                 }
+//                 "-o" => {
+//                     config.filename = Some(unwrap_or!(
+//                         args.next(),
+//                         return Err(format!("Expected argument for -o option")),
+//                     ));
+//                 }
+//                 "-i" => {
+//                     let iterations = unwrap_or!(
+//                         args.next(),
+//                         return Err(format!("Expected argument for -o option")),
+//                     );
+//                     config.max_iterations = unwrap_or!(
+//                         iterations.parse::<u32>(),
+//                         return Err(format!("Invalid number of iterations: {e:?}")),
+//                         with_error(e)
+//                     );
+//                 }
+//                 arg if arg.contains('x') => {
+//                     let idx = arg.find("x").expect("contains 'x'");
+//                     let (w, h) = arg.split_at(idx);
+//                     let h = &h[1..];
+//                     let w = unwrap_or!(
+//                         w.parse::<u32>(),
+//                         return Err(format!("Invalid width: {w:?}")),
+//                     );
+//                     let h = unwrap_or!(
+//                         h.parse::<u32>(),
+//                         return Err(format!("Invalid height: {h:?}")),
+//                     );
+//                     config.width = w;
+//                     config.height = h;
+//                 }
+//                 _ => {
+//                     return Err(format!("Unexpected argument: {arg:?}"));
+//                 }
+//             }
+//         }
+//         Ok(config)
+//     }
+// }
 
 fn fraction_to_hue(x: f64) -> Rgb<u8> {
     let x = x % 1.0;
@@ -112,19 +108,16 @@ fn generate(config: &Config) -> RgbImage {
         width,
         height,
         max_iterations,
-        xrange: (minx, maxx),
-        yrange: (miny, maxy),
+        center: (cx, cy),
+        zoom,
         ..
     } = config;
 
-    let xscale = maxx - minx;
-    let yscale = maxy - miny;
-
     let mut img = image::RgbImage::new(width, height);
     for y in 0..height {
-        let im = yscale * (y as f64) / height as f64 + miny;
+        let im = cy + (y as f64 - height as f64 / 2.0) / zoom;
         for x in 0..width {
-            let re = xscale * (x as f64) / width as f64 + minx;
+            let re = cx + (x as f64 - width as f64 / 2.0) / zoom;
             let c = Complex { re, im };
             let f = |z: Complex<f64>| z * z + c;
             let iterations =
@@ -150,45 +143,23 @@ fn generate(config: &Config) -> RgbImage {
 }
 
 fn main() {
-    let config = Config::parse().unwrap();
-    if !config.gui {
-        let img = generate(&config);
+    let config = Config::default();
+    
+    // Register and include resources
+    gtk::gio::resources_register_include!("compiled.gresource")
+        .expect("Failed to register resources.");
 
-        let filename = config.filename.as_deref().unwrap_or("/dev/stdout");
-        dbg!(filename);
+    // gui
+    // Create a new application
+    let app = Application::builder()
+        .application_id("com.github.zachs18.mandelbrot")
+        .build();
 
-        match img.save(filename) {
-            Err(ImageError::Unsupported(_)) => {
-                // img.save_with_format(filename, image::ImageFormat::Pnm).unwrap();
-                let encoder = PnmEncoder::new(File::create(filename).unwrap());
-                encoder
-                    .write_image(
-                        img.as_raw(),
-                        img.width(),
-                        img.height(),
-                        image::ColorType::Rgb8,
-                    )
-                    .unwrap();
-            }
-            result => return result.unwrap(),
-        };
-    } else {
-        // Register and include resources
-        gtk::gio::resources_register_include!("compiled.gresource")
-            .expect("Failed to register resources.");
+    // Connect to "activate" signal of `app`
+    app.connect_activate(build_logic(config));
 
-        // gui
-        // Create a new application
-        let app = Application::builder()
-            .application_id("com.github.zachs18.mandelbrot")
-            .build();
-
-        // Connect to "activate" signal of `app`
-        app.connect_activate(build_logic(config));
-
-        // Run the application
-        app.run_with_args::<&str>(&[]);
-    }
+    // Run the application
+    app.run_with_args::<&str>(&[]);
 }
 
 fn make_reader_entry<T: FromStr>(entry: &Entry, update_fn: impl Fn(T) + 'static) {
@@ -212,10 +183,10 @@ fn build_logic(mut config: Config) -> impl Fn(&gtk::Application) {
             changed: bool,
             quitting: bool,
             config: Config,
-            minx_entry: Entry,
-            maxx_entry: Entry,
-            miny_entry: Entry,
-            maxy_entry: Entry,
+            centerx_entry: Entry,
+            centery_entry: Entry,
+            scale_entry: Entry,
+            max_iterations_entry: Entry,
             img: Option<RgbImage>,
         }
 
@@ -223,35 +194,37 @@ fn build_logic(mut config: Config) -> impl Fn(&gtk::Application) {
 
         let builder = Builder::from_resource("/zachs18/mandelbrot/window.ui");
         let window: Window = builder.object("window").unwrap();
-        let minx_entry: Entry = builder.object("minx_entry").unwrap();
-        let maxx_entry: Entry = builder.object("maxx_entry").unwrap();
-        let miny_entry: Entry = builder.object("miny_entry").unwrap();
-        let maxy_entry: Entry = builder.object("maxy_entry").unwrap();
+        let centerx_entry: Entry = builder.object("centerx_entry").unwrap();
+        let centery_entry: Entry = builder.object("centery_entry").unwrap();
+        let scale_entry: Entry = builder.object("scale_entry").unwrap();
+        let max_iterations_entry: Entry = builder.object("max_iterations_entry").unwrap();
         let drawing_area: DrawingArea = builder.object("drawing_area").unwrap();
 
-        minx_entry.set_text(&format!("{}", config.xrange.0));
-        maxx_entry.set_text(&format!("{}", config.xrange.1));
-        miny_entry.set_text(&format!("{}", config.yrange.0));
-        maxy_entry.set_text(&format!("{}", config.yrange.1));
+        centerx_entry.set_text(&format!("{}", config.center.0));
+        centery_entry.set_text(&format!("{}", config.center.1));
+        scale_entry.set_text(&format!("{}", config.zoom));
+        max_iterations_entry.set_text(&format!("{}", config.max_iterations));
 
         let state = Rc::new(RefCell::new(State {
             changed: true,
             quitting: false,
             config,
-            minx_entry,
-            maxx_entry,
-            miny_entry,
-            maxy_entry,
+            centerx_entry,
+            centery_entry,
+            scale_entry,
+            max_iterations_entry,
             img: None,
         }));
 
-        macro_rules! make_float_entry_callback {
-            ( $range:ident . $idx:tt ) => {{
+        macro_rules! make_reader_entry_callback {
+            ( $range:ident $(. $idx:tt)?: $t:ty ) => {{
                 let state = Rc::clone(&state);
-                move |val: f64| {
-                    let mut state = state.borrow_mut();
-                    state.config.$range.$idx = val;
-                    state.changed = true;
+                move |val: $t| {
+                    // If this callback is a result of a programmatic change, don't update.
+                    if let Ok(mut state) = state.try_borrow_mut() {
+                        state.config.$range $(.$idx)? = val;
+                        state.changed = true;
+                    }
                 }
             }};
         }
@@ -269,47 +242,81 @@ fn build_logic(mut config: Config) -> impl Fn(&gtk::Application) {
 
         {
             let state_ = state.borrow();
-            make_reader_entry(&state_.minx_entry, make_float_entry_callback!(xrange.0));
-            make_reader_entry(&state_.miny_entry, make_float_entry_callback!(yrange.0));
-            make_reader_entry(&state_.maxx_entry, make_float_entry_callback!(xrange.1));
-            make_reader_entry(&state_.maxy_entry, make_float_entry_callback!(yrange.1));
+            make_reader_entry(&state_.centerx_entry, make_reader_entry_callback!(center.0: f64));
+            make_reader_entry(&state_.centery_entry, make_reader_entry_callback!(center.1: f64));
+            make_reader_entry(&state_.scale_entry, make_reader_entry_callback!(zoom: f64));
+            make_reader_entry(&state_.max_iterations_entry, make_reader_entry_callback!(max_iterations: u32));
         }
 
-        drawing_area.add_events(EventMask::SCROLL_MASK | EventMask::SMOOTH_SCROLL_MASK);
+        drawing_area.add_events(EventMask::SCROLL_MASK | EventMask::SMOOTH_SCROLL_MASK | EventMask::BUTTON_PRESS_MASK | EventMask::POINTER_MOTION_MASK);
 
         drawing_area.connect_scroll_event({
             let state = Rc::clone(&state);
             move |this, event| {
                 let mut state = state.borrow_mut();
                 state.changed = true;
-                dbg!(event.position());
+                let scroll_position = event.position();
+                let scroll_window = this.allocation();
+                let scroll_window = (scroll_window.width() as f64, scroll_window.height() as f64);
+
                 let Config {
-                    xrange: (minx, maxx),
-                    yrange: (miny, maxy),
+                    center: (cx, cy),
+                    zoom,
                     ..
                 } = &mut state.config;
-            
-                let xscale = *maxx - *minx;
-                let yscale = *maxy - *miny;
+
+                // Find scroll position in coordinate space
+                let scroll_x = *cx + (scroll_position.0 - scroll_window.0 / 2.0) / *zoom;
+                let scroll_y = *cy + (scroll_position.1 - scroll_window.1 / 2.0) / *zoom;
 
                 let (_dx, dy) = event.delta();
-                dbg!(this.allocation());
-                if dy < 0.0 { // "Up" = zoom in
-                    let xadj = xscale / 10.0;
-                    *minx += xadj;
-                    *maxx -= xadj;
-                    let yadj = yscale / 10.0;
-                    *miny += yadj;
-                    *maxy -= yadj;
+                let scale_factor = if dy < 0.0 { // "Up" = zoom in
+                    0.95
                 } else {
-                    let xadj = xscale / 10.0;
-                    *minx -= xadj;
-                    *maxx += xadj;
-                    let yadj = yscale / 10.0;
-                    *miny -= yadj;
-                    *maxy += yadj;
-                }
+                    1.0 / 0.95
+                };
+
+                println!("{},{} {},{}", cx, cy, scroll_x, scroll_y);
+
+                // https://www.desmos.com/calculator/vvpvpvxnhi
+                *cx = (*cx - scroll_x) * scale_factor + scroll_x;
+                *cy = (*cy - scroll_y) * scale_factor + scroll_y;
+                *zoom /= scale_factor;
+
+                state.centerx_entry.set_text(&format!("{}", state.config.center.0));
+                state.centery_entry.set_text(&format!("{}", state.config.center.1));
+                state.scale_entry.set_text(&format!("{}", state.config.zoom));
+
+                
                 Inhibit(true)
+            }
+        });
+
+        let is_pressed = Rc::new(Cell::new(false));
+
+        drawing_area.connect_button_press_event({
+            let is_pressed = Rc::clone(&is_pressed);
+            move |this, event| {
+                is_pressed.set(true);
+                Inhibit(false)
+            }
+        });
+
+        drawing_area.connect_button_release_event({
+            let is_pressed = Rc::clone(&is_pressed);
+            move |this, event| {
+                is_pressed.set(false);
+                Inhibit(false)
+            }
+        });
+
+        drawing_area.connect_motion_notify_event({
+            let is_pressed = Rc::clone(&is_pressed);
+            move |this, event| {
+                if is_pressed.get() {
+                    dbg!("Dragging!");
+                }
+                Inhibit(false)
             }
         });
 
@@ -351,7 +358,15 @@ fn build_logic(mut config: Config) -> impl Fn(&gtk::Application) {
                 let allocation = this.allocation();
                 state.config.width = allocation.width().try_into().expect("invalid size");
                 state.config.height = allocation.height().try_into().expect("invalid size");
-                dbg!();
+                false
+            }
+        });
+
+        drawing_area.connect_damage_event({
+            let state = Rc::clone(&state);
+            move |_this, _event| {
+                let mut state = state.borrow_mut();
+                state.changed = true;
                 false
             }
         });
@@ -359,8 +374,6 @@ fn build_logic(mut config: Config) -> impl Fn(&gtk::Application) {
         drawing_area.connect_draw({
             let state = Rc::clone(&state);
             move |this, ctx| {
-                dbg!(this.allocation());
-
                 let mut state = state.borrow_mut();
                 if let Some(img) = state.img.take() {
                     let width = img.width().try_into().expect("image too wide");
@@ -379,6 +392,8 @@ fn build_logic(mut config: Config) -> impl Fn(&gtk::Application) {
                     // ctx.set_source_rgb(1.0, 0.0, 0.0);
                     ctx.rectangle(0.0, 0.0, width as f64, height as f64);
                     ctx.fill().unwrap();
+                } else {
+                    dbg!("Failed to get img");
                 }
                 Inhibit(true)
             }
