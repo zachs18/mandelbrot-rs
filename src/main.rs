@@ -1,7 +1,12 @@
-use std::{cell::{RefCell, Cell}, ops::ControlFlow, rc::Rc, str::FromStr};
+use std::{
+    cell::{Cell, RefCell},
+    ops::ControlFlow,
+    rc::Rc,
+    str::FromStr,
+};
 
 use gtk::{
-    gdk::EventMask,
+    gdk::{EventMask, EventType},
     gdk_pixbuf::Pixbuf,
     glib::Bytes,
     prelude::{
@@ -9,7 +14,8 @@ use gtk::{
         GdkContextExt, WidgetExtManual,
     },
     traits::{EntryExt, GtkApplicationExt, StyleContextExt, WidgetExt},
-    Application, Builder, CssProvider, DrawingArea, EditableSignals, Entry, Inhibit, StyleContext, Window,
+    Application, Builder, CssProvider, DrawingArea, EditableSignals, Entry, Inhibit, StyleContext,
+    Window,
 };
 use image::{Rgb, RgbImage};
 use num_complex::Complex;
@@ -142,7 +148,7 @@ fn generate(config: &Config) -> RgbImage {
 
 fn main() {
     let config = Config::default();
-    
+
     // Register and include resources
     gtk::gio::resources_register_include!("compiled.gresource")
         .expect("Failed to register resources.");
@@ -240,50 +246,130 @@ fn build_logic(mut config: Config) -> impl Fn(&gtk::Application) {
 
         {
             let state_ = state.borrow();
-            make_reader_entry(&state_.centerx_entry, make_reader_entry_callback!(center.0: f64));
-            make_reader_entry(&state_.centery_entry, make_reader_entry_callback!(center.1: f64));
+            make_reader_entry(
+                &state_.centerx_entry,
+                make_reader_entry_callback!(center.0: f64),
+            );
+            make_reader_entry(
+                &state_.centery_entry,
+                make_reader_entry_callback!(center.1: f64),
+            );
             make_reader_entry(&state_.scale_entry, make_reader_entry_callback!(zoom: f64));
-            make_reader_entry(&state_.max_iterations_entry, make_reader_entry_callback!(max_iterations: u32));
+            make_reader_entry(
+                &state_.max_iterations_entry,
+                make_reader_entry_callback!(max_iterations: u32),
+            );
         }
 
-        drawing_area.add_events(EventMask::SCROLL_MASK | EventMask::SMOOTH_SCROLL_MASK | EventMask::BUTTON_PRESS_MASK | EventMask::BUTTON_RELEASE_MASK | EventMask::POINTER_MOTION_MASK);
+        fn coordinate_convert(
+            center: (f64, f64),
+            zoom: f64,
+            event_position: (f64, f64),
+            event_window: (f64, f64),
+        ) -> (f64, f64) {
+            // Find scroll position in coordinate space
+            let x = center.0 + (event_position.0 - event_window.0 / 2.0) / zoom;
+            let y = center.1 + (event_position.1 - event_window.1 / 2.0) / zoom;
+            (x, y)
+        }
 
-        drawing_area.connect_scroll_event({
+        let zoom_to = {
             let state = Rc::clone(&state);
-            move |this, event| {
+            move |zoom_location: (f64, f64), scale_factor: f64| {
                 let mut state = state.borrow_mut();
-                state.changed = true;
-                let scroll_position = event.position();
-                let scroll_window = this.allocation();
-                let scroll_window = (scroll_window.width() as f64, scroll_window.height() as f64);
-
                 let Config {
                     center: (cx, cy),
                     zoom,
                     ..
                 } = &mut state.config;
+                let (zoom_x, zoom_y) = zoom_location;
 
-                // Find scroll position in coordinate space
-                let scroll_x = *cx + (scroll_position.0 - scroll_window.0 / 2.0) / *zoom;
-                let scroll_y = *cy + (scroll_position.1 - scroll_window.1 / 2.0) / *zoom;
+                // https://www.desmos.com/calculator/vvpvpvxnhi
+                *cx = (*cx - zoom_x) * scale_factor + zoom_x;
+                *cy = (*cy - zoom_y) * scale_factor + zoom_y;
+                *zoom /= scale_factor;
+                state.changed = true;
+
+                state
+                    .centerx_entry
+                    .set_text(&format!("{}", state.config.center.0));
+                state
+                    .centery_entry
+                    .set_text(&format!("{}", state.config.center.1));
+                state
+                    .scale_entry
+                    .set_text(&format!("{}", state.config.zoom));
+            }
+        };
+
+        #[derive(Debug, Clone, Copy)]
+        enum Move {
+            Relative(f64, f64),
+            Absolute(f64, f64),
+        }
+
+        let move_center = {
+            let state = Rc::clone(&state);
+            move |move_: Move| {
+                let mut state = state.borrow_mut();
+                let Config {
+                    center: (cx, cy), ..
+                } = &mut state.config;
+                match move_ {
+                    Move::Relative(dx, dy) => {
+                        *cx += dx;
+                        *cy += dy;
+                    }
+                    Move::Absolute(x, y) => {
+                        *cx = x;
+                        *cy = y;
+                    }
+                }
+                state.changed = true;
+
+                state
+                    .centerx_entry
+                    .set_text(&format!("{}", state.config.center.0));
+                state
+                    .centery_entry
+                    .set_text(&format!("{}", state.config.center.1));
+                state
+                    .scale_entry
+                    .set_text(&format!("{}", state.config.zoom));
+            }
+        };
+
+        drawing_area.add_events(
+            EventMask::SCROLL_MASK
+                | EventMask::SMOOTH_SCROLL_MASK
+                | EventMask::BUTTON_PRESS_MASK
+                | EventMask::BUTTON_RELEASE_MASK
+                | EventMask::BUTTON_MOTION_MASK,
+        );
+
+        drawing_area.connect_scroll_event({
+            let state = Rc::clone(&state);
+            let zoom_to = zoom_to.clone();
+            move |this, event| {
+                let scroll_position = event.position();
+                let scroll_window = this.allocation();
+                let scroll_window = (scroll_window.width() as f64, scroll_window.height() as f64);
+
+                let Config { center, zoom, .. } = state.borrow().config;
+
+                let zoom_location =
+                    coordinate_convert(center, zoom, scroll_position, scroll_window);
 
                 let (_dx, dy) = event.delta();
-                let scale_factor = if dy < 0.0 { // "Up" = zoom in
+                let scale_factor = if dy < 0.0 {
+                    // "Up" = zoom in
                     0.95
                 } else {
                     1.0 / 0.95
                 };
 
-                // https://www.desmos.com/calculator/vvpvpvxnhi
-                *cx = (*cx - scroll_x) * scale_factor + scroll_x;
-                *cy = (*cy - scroll_y) * scale_factor + scroll_y;
-                *zoom /= scale_factor;
+                zoom_to(zoom_location, scale_factor);
 
-                state.centerx_entry.set_text(&format!("{}", state.config.center.0));
-                state.centery_entry.set_text(&format!("{}", state.config.center.1));
-                state.scale_entry.set_text(&format!("{}", state.config.zoom));
-
-                
                 Inhibit(true)
             }
         });
@@ -299,23 +385,29 @@ fn build_logic(mut config: Config) -> impl Fn(&gtk::Application) {
             let state = Rc::clone(&state);
             let drag_state = Rc::clone(&drag_state);
             move |this, event| {
-                let state = state.borrow();
                 let press_position = event.position();
                 let press_window = this.allocation();
                 let press_window = (press_window.width() as f64, press_window.height() as f64);
 
-                let Config {
-                    center: (cx, cy),
-                    zoom,
-                    ..
-                } = &state.config;
+                let Config { center, zoom, .. } = state.borrow().config;
 
                 // Find press position in coordinate space
-                let press_x = *cx + (press_position.0 - press_window.0 / 2.0) / *zoom;
-                let press_y = *cy + (press_position.1 - press_window.1 / 2.0) / *zoom;
-                drag_state.set(Some(DragState {
-                    drag_position: (press_x, press_y),
-                }));
+                let press_location = coordinate_convert(center, zoom, press_position, press_window);
+
+                if event.event_type() == EventType::ButtonPress {
+                    drag_state.set(Some(DragState {
+                        drag_position: press_location,
+                    }));
+                } else if event.event_type() == EventType::DoubleButtonPress {
+                    let scale_factor = if event.button() == 1 {
+                        // Double primary click == zoom in
+                        0.5
+                    } else {
+                        // Double alternate click == zoom out
+                        2.0
+                    };
+                    zoom_to(press_location, scale_factor);
+                }
                 Inhibit(false)
             }
         });
@@ -332,32 +424,21 @@ fn build_logic(mut config: Config) -> impl Fn(&gtk::Application) {
             let state = Rc::clone(&state);
             let drag_state = Rc::clone(&drag_state);
             move |this, event| {
-                if let Some(DragState { drag_position: (drag_x, drag_y) }) = drag_state.get() {
-                    let mut state = state.borrow_mut();
+                if let Some(DragState { drag_position }) = drag_state.get() {
                     let press_position = event.position();
                     let press_window = this.allocation();
                     let press_window = (press_window.width() as f64, press_window.height() as f64);
-    
-                    let Config {
-                        center: (cx, cy),
-                        zoom,
-                        ..
-                    } = &state.config;
-    
+
+                    let Config { center, zoom, .. } = state.borrow().config;
+
                     // Find press position in coordinate space
-                    let press_x = *cx + (press_position.0 - press_window.0 / 2.0) / *zoom;
-                    let press_y = *cy + (press_position.1 - press_window.1 / 2.0) / *zoom;
+                    let press_location =
+                        coordinate_convert(center, zoom, press_position, press_window);
 
-                    let drag_offset_x = press_x - drag_x;
-                    let drag_offset_y = press_y - drag_y;
+                    let drag_offset_x = drag_position.0 - press_location.0;
+                    let drag_offset_y = drag_position.1 - press_location.1;
 
-                    state.config.center.0 -= drag_offset_x;
-                    state.config.center.1 -= drag_offset_y;
-                    state.changed = true;
-
-                    state.centerx_entry.set_text(&format!("{}", state.config.center.0));
-                    state.centery_entry.set_text(&format!("{}", state.config.center.1));
-                    state.scale_entry.set_text(&format!("{}", state.config.zoom));
+                    move_center(Move::Relative(drag_offset_x, drag_offset_y));
                 }
                 Inhibit(false)
             }
