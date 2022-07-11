@@ -1,9 +1,9 @@
-use std::{cell::{RefCell, Cell}, fs::File, ops::ControlFlow, rc::Rc, str::FromStr};
+use std::{cell::{RefCell, Cell}, ops::ControlFlow, rc::Rc, str::FromStr};
 
 use gtk::{
     gdk::EventMask,
     gdk_pixbuf::Pixbuf,
-    glib::{clone, Bytes},
+    glib::Bytes,
     prelude::{
         ApplicationExt, ApplicationExtManual, BuilderExtManual, Continue, CssProviderExt,
         GdkContextExt, WidgetExtManual,
@@ -11,10 +11,8 @@ use gtk::{
     traits::{EntryExt, GtkApplicationExt, StyleContextExt, WidgetExt},
     Application, Builder, CssProvider, DrawingArea, EditableSignals, Entry, Inhibit, StyleContext, Window,
 };
-use image::{codecs::pnm::PnmEncoder, ImageEncoder, ImageError, Rgb, RgbImage};
+use image::{Rgb, RgbImage};
 use num_complex::Complex;
-
-mod utils;
 
 #[derive(Debug, Clone)]
 struct Config {
@@ -31,8 +29,8 @@ impl Default for Config {
             width: 512,
             height: 512,
             max_iterations: 1000,
-            center: (0.0, -0.875),
-            zoom: 2048.0,
+            center: (-0.75, 0.0),
+            zoom: 192.0,
         }
     }
 }
@@ -248,7 +246,7 @@ fn build_logic(mut config: Config) -> impl Fn(&gtk::Application) {
             make_reader_entry(&state_.max_iterations_entry, make_reader_entry_callback!(max_iterations: u32));
         }
 
-        drawing_area.add_events(EventMask::SCROLL_MASK | EventMask::SMOOTH_SCROLL_MASK | EventMask::BUTTON_PRESS_MASK | EventMask::POINTER_MOTION_MASK);
+        drawing_area.add_events(EventMask::SCROLL_MASK | EventMask::SMOOTH_SCROLL_MASK | EventMask::BUTTON_PRESS_MASK | EventMask::BUTTON_RELEASE_MASK | EventMask::POINTER_MOTION_MASK);
 
         drawing_area.connect_scroll_event({
             let state = Rc::clone(&state);
@@ -292,29 +290,72 @@ fn build_logic(mut config: Config) -> impl Fn(&gtk::Application) {
             }
         });
 
-        let is_pressed = Rc::new(Cell::new(false));
+        #[derive(Debug, Clone, Copy)]
+        struct DragState {
+            drag_position: (f64, f64),
+        }
+
+        let drag_state = Rc::new(Cell::new(None::<DragState>));
 
         drawing_area.connect_button_press_event({
-            let is_pressed = Rc::clone(&is_pressed);
+            let state = Rc::clone(&state);
+            let drag_state = Rc::clone(&drag_state);
             move |this, event| {
-                is_pressed.set(true);
+                let state = state.borrow_mut();
+                let press_position = event.position();
+                let press_window = this.allocation();
+                let press_window = (press_window.width() as f64, press_window.height() as f64);
+
+                let Config {
+                    center: (cx, cy),
+                    zoom,
+                    ..
+                } = &state.config;
+
+                // Find press position in coordinate space
+                let press_x = *cx + (press_position.0 - press_window.0 / 2.0) / *zoom;
+                let press_y = *cy + (press_position.1 - press_window.1 / 2.0) / *zoom;
+                drag_state.set(Some(DragState {
+                    drag_position: (press_x, press_y),
+                }));
                 Inhibit(false)
             }
         });
 
         drawing_area.connect_button_release_event({
-            let is_pressed = Rc::clone(&is_pressed);
-            move |this, event| {
-                is_pressed.set(false);
+            let drag_state = Rc::clone(&drag_state);
+            move |_this, _event| {
+                drag_state.set(None);
                 Inhibit(false)
             }
         });
 
         drawing_area.connect_motion_notify_event({
-            let is_pressed = Rc::clone(&is_pressed);
+            let state = Rc::clone(&state);
+            let drag_state = Rc::clone(&drag_state);
             move |this, event| {
-                if is_pressed.get() {
-                    dbg!("Dragging!");
+                if let Some(DragState { drag_position: (drag_x, drag_y) }) = drag_state.get() {
+                    let mut state = state.borrow_mut();
+                    let press_position = event.position();
+                    let press_window = this.allocation();
+                    let press_window = (press_window.width() as f64, press_window.height() as f64);
+    
+                    let Config {
+                        center: (cx, cy),
+                        zoom,
+                        ..
+                    } = &state.config;
+    
+                    // Find press position in coordinate space
+                    let press_x = *cx + (press_position.0 - press_window.0 / 2.0) / *zoom;
+                    let press_y = *cy + (press_position.1 - press_window.1 / 2.0) / *zoom;
+
+                    let drag_offset_x = press_x - drag_x;
+                    let drag_offset_y = press_y - drag_y;
+
+                    state.config.center.0 -= drag_offset_x;
+                    state.config.center.1 -= drag_offset_y;
+                    state.changed = true;
                 }
                 Inhibit(false)
             }
@@ -373,12 +414,12 @@ fn build_logic(mut config: Config) -> impl Fn(&gtk::Application) {
 
         drawing_area.connect_draw({
             let state = Rc::clone(&state);
-            move |this, ctx| {
-                let mut state = state.borrow_mut();
-                if let Some(img) = state.img.take() {
+            move |_this, ctx| {
+                let state = state.borrow();
+                if let Some(img) = state.img.as_ref() {
                     let width = img.width().try_into().expect("image too wide");
                     let height = img.height().try_into().expect("image too tall");
-                    let data = Bytes::from_owned(img.into_vec());
+                    let data = Bytes::from(&**img);
                     let pixbuf = Pixbuf::from_bytes(
                         &data,
                         gtk::gdk_pixbuf::Colorspace::Rgb,
