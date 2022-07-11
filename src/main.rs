@@ -274,8 +274,6 @@ fn build_logic(mut config: Config) -> impl Fn(&gtk::Application) {
                     1.0 / 0.95
                 };
 
-                println!("{},{} {},{}", cx, cy, scroll_x, scroll_y);
-
                 // https://www.desmos.com/calculator/vvpvpvxnhi
                 *cx = (*cx - scroll_x) * scale_factor + scroll_x;
                 *cy = (*cy - scroll_y) * scale_factor + scroll_y;
@@ -301,7 +299,7 @@ fn build_logic(mut config: Config) -> impl Fn(&gtk::Application) {
             let state = Rc::clone(&state);
             let drag_state = Rc::clone(&drag_state);
             move |this, event| {
-                let state = state.borrow_mut();
+                let state = state.borrow();
                 let press_position = event.position();
                 let press_window = this.allocation();
                 let press_window = (press_window.width() as f64, press_window.height() as f64);
@@ -356,6 +354,10 @@ fn build_logic(mut config: Config) -> impl Fn(&gtk::Application) {
                     state.config.center.0 -= drag_offset_x;
                     state.config.center.1 -= drag_offset_y;
                     state.changed = true;
+
+                    state.centerx_entry.set_text(&format!("{}", state.config.center.0));
+                    state.centery_entry.set_text(&format!("{}", state.config.center.1));
+                    state.scale_entry.set_text(&format!("{}", state.config.zoom));
                 }
                 Inhibit(false)
             }
