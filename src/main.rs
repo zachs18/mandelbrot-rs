@@ -192,6 +192,18 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
             img: Option<RgbImage>,
         }
 
+        impl State {
+            fn update_entries(&mut self) {
+                let config = &self.config;
+
+                self.centerx_entry.set_text(&format!("{}", config.center.0));
+                self.centery_entry.set_text(&format!("{}", config.center.1));
+                self.scale_entry.set_text(&format!("{}", config.zoom));
+                self.max_iterations_entry.set_text(&format!("{}", config.max_iterations));
+                self.hue_scale_entry.set_text(&format!("{}", config.hue_scale));
+            }
+        }
+
         let config = config.take().expect("activate should only be called once");
 
         let builder = Builder::from_resource("/zachs18/mandelbrot/window.ui");
@@ -204,12 +216,6 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
         let reset_button: Button = builder.object("reset_button").unwrap();
         let drawing_area: DrawingArea = builder.object("drawing_area").unwrap();
 
-        centerx_entry.set_text(&format!("{}", config.center.0));
-        centery_entry.set_text(&format!("{}", config.center.1));
-        scale_entry.set_text(&format!("{}", config.zoom));
-        max_iterations_entry.set_text(&format!("{}", config.max_iterations));
-        hue_scale_entry.set_text(&format!("{}", config.hue_scale));
-
         let state = Rc::new(RefCell::new(State {
             changed: true,
             quitting: false,
@@ -221,6 +227,9 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
             hue_scale_entry,
             img: None,
         }));
+
+        // Initialize entries to initial (default) config values.
+        state.borrow_mut().update_entries();
 
         macro_rules! make_reader_entry_callback {
             ( $range:ident $(. $idx:tt)?: $t:ty ) => {{
@@ -271,6 +280,7 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
                     let mut state = state.borrow_mut();
                     state.config = Config::default();
                     state.changed = true;
+                    state.update_entries();
                 }
             });
         }
@@ -304,15 +314,7 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
                 *zoom /= scale_factor;
                 state.changed = true;
 
-                state
-                    .centerx_entry
-                    .set_text(&format!("{}", state.config.center.0));
-                state
-                    .centery_entry
-                    .set_text(&format!("{}", state.config.center.1));
-                state
-                    .scale_entry
-                    .set_text(&format!("{}", state.config.zoom));
+                state.update_entries();
             }
         };
 
@@ -341,15 +343,7 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
                 }
                 state.changed = true;
 
-                state
-                    .centerx_entry
-                    .set_text(&format!("{}", state.config.center.0));
-                state
-                    .centery_entry
-                    .set_text(&format!("{}", state.config.center.1));
-                state
-                    .scale_entry
-                    .set_text(&format!("{}", state.config.zoom));
+                state.update_entries();
             }
         };
 
