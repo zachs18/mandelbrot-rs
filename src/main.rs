@@ -13,30 +13,28 @@ use gtk::{
         ApplicationExt, ApplicationExtManual, BuilderExtManual, Continue, CssProviderExt,
         GdkContextExt, WidgetExtManual,
     },
-    traits::{EntryExt, GtkApplicationExt, StyleContextExt, WidgetExt},
+    traits::{EntryExt, GtkApplicationExt, StyleContextExt, WidgetExt, ButtonExt},
     Application, Builder, CssProvider, DrawingArea, EditableSignals, Entry, Inhibit, StyleContext,
-    Window,
+    Window, Button,
 };
 use image::{Rgb, RgbImage};
 use num_complex::Complex;
 
 #[derive(Debug, Clone)]
 struct Config {
-    width: u32,
-    height: u32,
     max_iterations: u32,
     center: (f64, f64),
     zoom: f64,
+    hue_scale: f64,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
-            width: 512,
-            height: 512,
             max_iterations: 1000,
             center: (-0.75, 0.0),
             zoom: 192.0,
+            hue_scale: 60.0,
         }
     }
 }
@@ -107,15 +105,16 @@ fn fraction_to_hue(x: f64) -> Rgb<u8> {
     }
 }
 
-fn generate(config: &Config) -> RgbImage {
+fn generate(config: &Config, width: i32, height: i32) -> RgbImage {
     let &Config {
-        width,
-        height,
         max_iterations,
         center: (cx, cy),
         zoom,
+        hue_scale,
         ..
     } = config;
+    let width = width.try_into().unwrap();
+    let height = height.try_into().unwrap();
 
     let mut img = image::RgbImage::new(width, height);
     for y in 0..height {
@@ -136,7 +135,7 @@ fn generate(config: &Config) -> RgbImage {
 
             *img.get_pixel_mut(x, y) = match iterations {
                 ControlFlow::Break(it) => {
-                    fraction_to_hue((it as f64 / max_iterations as f64) * 60.0)
+                    fraction_to_hue((it as f64 / max_iterations as f64) * hue_scale)
                 }
                 ControlFlow::Continue(_) => image::Rgb([0, 0, 0]),
             };
@@ -178,9 +177,7 @@ fn make_reader_entry<T: FromStr>(entry: &Entry, update_fn: impl Fn(T) + 'static)
     });
 }
 
-fn build_logic(mut config: Config) -> impl Fn(&gtk::Application) {
-    config.width = 512;
-    config.height = 512;
+fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
     let config = RefCell::new(Some(config));
     move |app: &gtk::Application| {
         struct State {
@@ -191,6 +188,7 @@ fn build_logic(mut config: Config) -> impl Fn(&gtk::Application) {
             centery_entry: Entry,
             scale_entry: Entry,
             max_iterations_entry: Entry,
+            hue_scale_entry: Entry,
             img: Option<RgbImage>,
         }
 
@@ -202,12 +200,15 @@ fn build_logic(mut config: Config) -> impl Fn(&gtk::Application) {
         let centery_entry: Entry = builder.object("centery_entry").unwrap();
         let scale_entry: Entry = builder.object("scale_entry").unwrap();
         let max_iterations_entry: Entry = builder.object("max_iterations_entry").unwrap();
+        let hue_scale_entry: Entry = builder.object("hue_scale_entry").unwrap();
+        let reset_button: Button = builder.object("reset_button").unwrap();
         let drawing_area: DrawingArea = builder.object("drawing_area").unwrap();
 
         centerx_entry.set_text(&format!("{}", config.center.0));
         centery_entry.set_text(&format!("{}", config.center.1));
         scale_entry.set_text(&format!("{}", config.zoom));
         max_iterations_entry.set_text(&format!("{}", config.max_iterations));
+        hue_scale_entry.set_text(&format!("{}", config.hue_scale));
 
         let state = Rc::new(RefCell::new(State {
             changed: true,
@@ -217,6 +218,7 @@ fn build_logic(mut config: Config) -> impl Fn(&gtk::Application) {
             centery_entry,
             scale_entry,
             max_iterations_entry,
+            hue_scale_entry,
             img: None,
         }));
 
@@ -259,6 +261,18 @@ fn build_logic(mut config: Config) -> impl Fn(&gtk::Application) {
                 &state_.max_iterations_entry,
                 make_reader_entry_callback!(max_iterations: u32),
             );
+            make_reader_entry(
+                &state_.hue_scale_entry,
+                make_reader_entry_callback!(hue_scale: f64),
+            );
+            reset_button.connect_clicked({
+                let state = Rc::clone(&state);
+                move |_this| {
+                    let mut state = state.borrow_mut();
+                    state.config = Config::default();
+                    state.changed = true;
+                }
+            });
         }
 
         fn coordinate_convert(
@@ -464,7 +478,8 @@ fn build_logic(mut config: Config) -> impl Fn(&gtk::Application) {
                 }
                 let config = state.config.clone();
                 state.changed = false;
-                let img = generate(&config);
+                let allocation = drawing_area.allocation();
+                let img = generate(&config, allocation.width(), allocation.height());
                 // let width = img.width().try_into().expect("image too wide");
                 // let height = img.height().try_into().expect("image too tall");
                 // drawing_area.set_size_request(width, height);
@@ -476,12 +491,9 @@ fn build_logic(mut config: Config) -> impl Fn(&gtk::Application) {
 
         drawing_area.connect_configure_event({
             let state = Rc::clone(&state);
-            move |this, _event| {
+            move |_this, _event| {
                 let mut state = state.borrow_mut();
                 state.changed = true;
-                let allocation = this.allocation();
-                state.config.width = allocation.width().try_into().expect("invalid size");
-                state.config.height = allocation.height().try_into().expect("invalid size");
                 false
             }
         });
