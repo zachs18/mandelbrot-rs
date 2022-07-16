@@ -22,7 +22,7 @@ use watch::local::Watched;
 
 mod generation;
 
-use crate::generation::{Config, generate};
+use crate::generation::{Config, generate_mandelbrot};
 
 fn main() {
     let config = Config::default();
@@ -354,7 +354,7 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
                             break
                         },
                     };
-                    let img = unblock(move || generate(config)).await;
+                    let img = unblock(move || generate_mandelbrot(config)).await;
                     *img_rc.borrow_mut() = Some(img);
                     drawing_area.queue_draw();
                 }

@@ -39,7 +39,11 @@ fn fraction_to_hue(x: f64) -> Rgb<u8> {
     }
 }
 
-pub fn generate(config: Config) -> RgbImage {
+pub fn generate_with<F, G>(config: Config, iteration_fn_maker: F) -> RgbImage
+    where
+        F: Fn(Complex<f64>) -> G,
+        G: Fn(Complex<f64>) -> Complex<f64>,
+{
     let Config {
         size: (width, height),
         max_iterations,
@@ -57,7 +61,7 @@ pub fn generate(config: Config) -> RgbImage {
         for x in 0..width {
             let re = cx + (x as f64 - width as f64 / 2.0) / zoom;
             let c = Complex { re, im };
-            let f = |z: Complex<f64>| z * z + c;
+            let f = iteration_fn_maker(c);
             let iterations =
                 (0..max_iterations).try_fold(Complex::new(0.0, 0.0), |val, iteration| {
                     let val = f(val);
@@ -78,4 +82,21 @@ pub fn generate(config: Config) -> RgbImage {
     }
 
     img
+}
+
+pub fn generate_mandelbrot(config: Config) -> RgbImage {
+    generate_with(config, |c: Complex<f64>| {
+        move |z: Complex<f64>| {
+            z * z + c
+        }
+    })
+}
+
+pub fn generate_burning_ship(config: Config) -> RgbImage {
+    generate_with(config, |c: Complex<f64>| {
+        move |z: Complex<f64>| {
+            let z = Complex { re: z.re.abs(), im: z.im.abs() };
+            z * z + c
+        }
+    })
 }
