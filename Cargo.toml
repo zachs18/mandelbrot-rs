@@ -1,23 +1,5 @@
-[package]
-name = "mandelbrot"
-version = "0.1.0"
-edition = "2021"
-
-[profile.dev]
-opt-level = 1
-
-[dependencies]
-image = { version = "0.24.2", features = ["pnm"] }
-num-complex = "0.4.2"
-gtk = "0.15"
-blocking = "1.2.0"
-#glib = "0.15"
-#gio = "0.15"
-#gdk-pixbuf = "0.15"
-
-[dependencies.watch]
-package = "watch"
-path = "../watch"
-
-[build-dependencies]
-gio = "0.15"
+[workspace]
+members = [
+    "mandelbrot",
+    "watch",
+]
