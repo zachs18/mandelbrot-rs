@@ -5,6 +5,7 @@ use num_complex::Complex;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Config {
+    pub size: (i32, i32),
     pub max_iterations: u32,
     pub center: (f64, f64),
     pub zoom: f64,
@@ -14,6 +15,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            size: (512, 512),
             max_iterations: 1000,
             center: (-0.75, 0.0),
             zoom: 192.0,
@@ -37,8 +39,9 @@ fn fraction_to_hue(x: f64) -> Rgb<u8> {
     }
 }
 
-pub fn generate(config: &Config, width: i32, height: i32) -> RgbImage {
-    let &Config {
+pub fn generate(config: Config) -> RgbImage {
+    let Config {
+        size: (width, height),
         max_iterations,
         center: (cx, cy),
         zoom,

@@ -4,12 +4,13 @@ use std::{
     str::FromStr,
 };
 
+use blocking::unblock;
 use gtk::{
     gdk::{EventMask, EventType},
     gdk_pixbuf::Pixbuf,
     glib::Bytes,
     prelude::{
-        ApplicationExt, ApplicationExtManual, BuilderExtManual, Continue, CssProviderExt,
+        ApplicationExt, ApplicationExtManual, BuilderExtManual, CssProviderExt,
         GdkContextExt, WidgetExtManual,
     },
     traits::{EntryExt, GtkApplicationExt, StyleContextExt, WidgetExt, ButtonExt},
@@ -17,9 +18,11 @@ use gtk::{
     Window, Button,
 };
 use image::RgbImage;
+use watch::local::Watched;
 
 mod generation;
-use generation::{Config, generate};
+
+use crate::generation::{Config, generate};
 
 fn main() {
     let config = Config::default();
@@ -57,20 +60,19 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
     let config = RefCell::new(Some(config));
     move |app: &gtk::Application| {
         struct State {
-            changed: bool,
-            quitting: bool,
-            config: Config,
+            config: Rc<Watched<Config>>,
             centerx_entry: Entry,
             centery_entry: Entry,
             scale_entry: Entry,
             max_iterations_entry: Entry,
             hue_scale_entry: Entry,
-            img: Option<RgbImage>,
+            // img: Watcher<'static, Option<RgbImage>>,
+            img: Rc<RefCell<Option<RgbImage>>>,
         }
 
         impl State {
-            fn update_entries(&mut self) {
-                let config = &self.config;
+            fn update_entries(&self) {
+                let config = self.config.get();
 
                 self.centerx_entry.set_text(&format!("{}", config.center.0));
                 self.centery_entry.set_text(&format!("{}", config.center.1));
@@ -92,30 +94,32 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
         let reset_button: Button = builder.object("reset_button").unwrap();
         let drawing_area: DrawingArea = builder.object("drawing_area").unwrap();
 
-        let state = Rc::new(RefCell::new(State {
-            changed: true,
-            quitting: false,
-            config,
+        // let img_watched = Watched::new(None::<RgbImage>);
+        // let img_watcher = img_watched.watch();
+        let img_rc: Rc<RefCell<Option<RgbImage>>> = Rc::default();
+
+        let state = Rc::new(State {
+            config: Watched::new(config),
             centerx_entry,
             centery_entry,
             scale_entry,
             max_iterations_entry,
             hue_scale_entry,
-            img: None,
-        }));
+            img: img_rc.clone(),
+        });
 
         // Initialize entries to initial (default) config values.
-        state.borrow_mut().update_entries();
+        state.update_entries();
 
         macro_rules! make_reader_entry_callback {
             ( $range:ident $(. $idx:tt)?: $t:ty ) => {{
                 let state = Rc::clone(&state);
                 move |val: $t| {
-                    // If this callback is a result of a programmatic change, don't update.
-                    if let Ok(mut state) = state.try_borrow_mut() {
-                        state.config.$range $(.$idx)? = val;
-                        state.changed = true;
-                    }
+                    eprintln!("TODO: If this callback is a result of a programmatic change, don't update(?)");
+                    state.config.update(|config| {
+                        config.$range $(.$idx)? = val;
+                        true
+                    });
                 }
             }};
         }
@@ -132,30 +136,31 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
         );
 
         {
-            let state_ = state.borrow();
             make_reader_entry(
-                &state_.centerx_entry,
+                &state.centerx_entry,
                 make_reader_entry_callback!(center.0: f64),
             );
             make_reader_entry(
-                &state_.centery_entry,
+                &state.centery_entry,
                 make_reader_entry_callback!(center.1: f64),
             );
-            make_reader_entry(&state_.scale_entry, make_reader_entry_callback!(zoom: f64));
+            make_reader_entry(&state.scale_entry, make_reader_entry_callback!(zoom: f64));
             make_reader_entry(
-                &state_.max_iterations_entry,
+                &state.max_iterations_entry,
                 make_reader_entry_callback!(max_iterations: u32),
             );
             make_reader_entry(
-                &state_.hue_scale_entry,
+                &state.hue_scale_entry,
                 make_reader_entry_callback!(hue_scale: f64),
             );
             reset_button.connect_clicked({
                 let state = Rc::clone(&state);
                 move |_this| {
-                    let mut state = state.borrow_mut();
-                    state.config = Config::default();
-                    state.changed = true;
+                    state.config.update(|config| {
+                        let size = config.size;
+                        *config = Config { size, ..Config::default() };
+                        true
+                    });
                     state.update_entries();
                 }
             });
@@ -176,19 +181,20 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
         let zoom_to = {
             let state = Rc::clone(&state);
             move |zoom_location: (f64, f64), scale_factor: f64| {
-                let mut state = state.borrow_mut();
-                let Config {
-                    center: (cx, cy),
-                    zoom,
-                    ..
-                } = &mut state.config;
-                let (zoom_x, zoom_y) = zoom_location;
+                state.config.update(|config| {
+                    let Config {
+                        center: (cx, cy),
+                        zoom,
+                        ..
+                    } = config;
+                    let (zoom_x, zoom_y) = zoom_location;
 
-                // https://www.desmos.com/calculator/vvpvpvxnhi
-                *cx = (*cx - zoom_x) * scale_factor + zoom_x;
-                *cy = (*cy - zoom_y) * scale_factor + zoom_y;
-                *zoom /= scale_factor;
-                state.changed = true;
+                    // https://www.desmos.com/calculator/vvpvpvxnhi
+                    *cx = (*cx - zoom_x) * scale_factor + zoom_x;
+                    *cy = (*cy - zoom_y) * scale_factor + zoom_y;
+                    *zoom /= scale_factor;
+                    true
+                });
 
                 state.update_entries();
             }
@@ -203,21 +209,22 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
         let move_center = {
             let state = Rc::clone(&state);
             move |move_: Move| {
-                let mut state = state.borrow_mut();
-                let Config {
-                    center: (cx, cy), ..
-                } = &mut state.config;
-                match move_ {
-                    Move::Relative(dx, dy) => {
-                        *cx += dx;
-                        *cy += dy;
+                state.config.update(|config| {
+                    let Config {
+                        center: (cx, cy), ..
+                    } = config;
+                    match move_ {
+                        Move::Relative(dx, dy) => {
+                            *cx += dx;
+                            *cy += dy;
+                        }
+                        Move::Absolute(x, y) => {
+                            *cx = x;
+                            *cy = y;
+                        }
                     }
-                    Move::Absolute(x, y) => {
-                        *cx = x;
-                        *cy = y;
-                    }
-                }
-                state.changed = true;
+                    true
+                });
 
                 state.update_entries();
             }
@@ -239,7 +246,7 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
                 let scroll_window = this.allocation();
                 let scroll_window = (scroll_window.width() as f64, scroll_window.height() as f64);
 
-                let Config { center, zoom, .. } = state.borrow().config;
+                let Config { center, zoom, .. } = state.config.get();
 
                 let zoom_location =
                     coordinate_convert(center, zoom, scroll_position, scroll_window);
@@ -273,7 +280,7 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
                 let press_window = this.allocation();
                 let press_window = (press_window.width() as f64, press_window.height() as f64);
 
-                let Config { center, zoom, .. } = state.borrow().config;
+                let Config { center, zoom, .. } = state.config.get();
 
                 // Find press position in coordinate space
                 let press_location = coordinate_convert(center, zoom, press_position, press_window);
@@ -313,7 +320,7 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
                     let press_window = this.allocation();
                     let press_window = (press_window.width() as f64, press_window.height() as f64);
 
-                    let Config { center, zoom, .. } = state.borrow().config;
+                    let Config { center, zoom, .. } = state.config.get();
 
                     // Find press position in coordinate space
                     let press_location =
@@ -329,50 +336,51 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
         });
 
         window.connect_destroy({
-            let state = Rc::clone(&state);
+            let _state = Rc::clone(&state);
             move |_this| {
-                let mut state = state.borrow_mut();
-                state.quitting = true;
+                eprintln!("TODO: handle quitting?");
+                // state.quitting = true;
             }
         });
 
-        gtk::glib::timeout_add_local(std::time::Duration::from_millis(10), {
-            let state = Rc::clone(&state);
+        gtk::glib::MainContext::default().spawn_local({
+            let mut config = state.config.watch();
             let drawing_area = drawing_area.clone();
-            move || {
-                let mut state = state.borrow_mut();
-                if state.quitting {
-                    return Continue(false);
-                } else if !state.changed {
-                    return Continue(true);
+            async move {
+                loop {
+                    let config = match config.watch().await {
+                        Ok(config) => config,
+                        Err(_) => {
+                            break
+                        },
+                    };
+                    let img = unblock(move || generate(config)).await;
+                    *img_rc.borrow_mut() = Some(img);
+                    drawing_area.queue_draw();
                 }
-                let config = state.config.clone();
-                state.changed = false;
-                let allocation = drawing_area.allocation();
-                let img = generate(&config, allocation.width(), allocation.height());
-                // let width = img.width().try_into().expect("image too wide");
-                // let height = img.height().try_into().expect("image too tall");
-                // drawing_area.set_size_request(width, height);
-                drawing_area.queue_draw();
-                state.img = Some(img);
-                Continue(true)
             }
         });
 
         drawing_area.connect_configure_event({
             let state = Rc::clone(&state);
-            move |_this, _event| {
-                let mut state = state.borrow_mut();
-                state.changed = true;
+            move |this, _event| {
+                state.config.update(|config| {
+                    let allocation = this.allocation();
+                    config.size = (allocation.width(), allocation.height());
+                    true
+                });
                 false
             }
         });
 
         drawing_area.connect_damage_event({
             let state = Rc::clone(&state);
-            move |_this, _event| {
-                let mut state = state.borrow_mut();
-                state.changed = true;
+            move |this, _event| {
+                state.config.update(|config| {
+                    let allocation = this.allocation();
+                    config.size = (allocation.width(), allocation.height());
+                    true
+                });
                 false
             }
         });
@@ -380,8 +388,8 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
         drawing_area.connect_draw({
             let state = Rc::clone(&state);
             move |_this, ctx| {
-                let state = state.borrow();
-                if let Some(img) = state.img.as_ref() {
+                let img = state.img.borrow();
+                if let Some(img) = img.as_ref() {
                     let width = img.width().try_into().expect("image too wide");
                     let height = img.height().try_into().expect("image too tall");
                     let data = Bytes::from(&**img);
@@ -401,6 +409,7 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
                 } else {
                     dbg!("Failed to get img");
                 }
+                eprintln!("TODO: when zooming, use a zoomed version of old image while new image is being generated");
                 Inhibit(true)
             }
         });
