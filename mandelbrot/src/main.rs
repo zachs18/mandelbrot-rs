@@ -13,16 +13,16 @@ use gtk::{
         ApplicationExt, ApplicationExtManual, BuilderExtManual, CssProviderExt,
         GdkContextExt, WidgetExtManual,
     },
-    traits::{EntryExt, GtkApplicationExt, StyleContextExt, WidgetExt, ButtonExt},
+    traits::{EntryExt, GtkApplicationExt, StyleContextExt, WidgetExt, ButtonExt, ToggleButtonExt},
     Application, Builder, CssProvider, DrawingArea, EditableSignals, Entry, Inhibit, StyleContext,
-    Window, Button,
+    Window, Button, RadioButton,
 };
 use image::RgbImage;
 use watch::local::Watched;
 
 mod generation;
 
-use crate::generation::{Config, generate_mandelbrot};
+use crate::generation::{Config, Precision, generate, Fractal};
 
 fn main() {
     let config = Config::default();
@@ -66,12 +66,20 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
             scale_entry: Entry,
             max_iterations_entry: Entry,
             hue_scale_entry: Entry,
+
+            mandelbrot_radiobutton: RadioButton,
+            burning_ship_radiobutton: RadioButton,
+
+            f32_radiobutton: RadioButton,
+            f64_radiobutton: RadioButton,
+            f128_radiobutton: RadioButton,
+
             // img: Watcher<'static, Option<RgbImage>>,
             img: Rc<RefCell<Option<RgbImage>>>,
         }
 
         impl State {
-            fn update_entries(&self) {
+            fn update_widgets(&self) {
                 let config = self.config.get();
 
                 self.centerx_entry.set_text(&format!("{}", config.center.0));
@@ -79,20 +87,62 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
                 self.scale_entry.set_text(&format!("{}", config.zoom));
                 self.max_iterations_entry.set_text(&format!("{}", config.max_iterations));
                 self.hue_scale_entry.set_text(&format!("{}", config.hue_scale));
+
+                match config.fractal {
+                    Fractal::Mandelbrot => self.mandelbrot_radiobutton.set_active(true),
+                    Fractal::BurningShip => self.burning_ship_radiobutton.set_active(true),
+                }
+
+                match config.precision {
+                    Precision::Single => self.f32_radiobutton.set_active(true),
+                    Precision::Double => self.f64_radiobutton.set_active(true),
+                    Precision::Quad => self.f128_radiobutton.set_active(true),
+                }
             }
         }
 
         let config = config.take().expect("activate should only be called once");
 
         let builder = Builder::from_resource("/zachs18/mandelbrot/window.ui");
-        let window: Window = builder.object("window").unwrap();
-        let centerx_entry: Entry = builder.object("centerx_entry").unwrap();
-        let centery_entry: Entry = builder.object("centery_entry").unwrap();
-        let scale_entry: Entry = builder.object("scale_entry").unwrap();
-        let max_iterations_entry: Entry = builder.object("max_iterations_entry").unwrap();
-        let hue_scale_entry: Entry = builder.object("hue_scale_entry").unwrap();
-        let reset_button: Button = builder.object("reset_button").unwrap();
-        let drawing_area: DrawingArea = builder.object("drawing_area").unwrap();
+
+        macro_rules! get_widgets {
+            ( $($name:ident: $ty:ty;)* ) => {
+                $(
+                    let $name: $ty = builder.object(stringify!($name)).unwrap();
+                )*
+            }
+        }
+
+        get_widgets!{
+            window: Window;
+            centerx_entry: Entry;
+            centery_entry: Entry;
+            scale_entry: Entry;
+            max_iterations_entry: Entry;
+            hue_scale_entry: Entry;
+
+            mandelbrot_radiobutton: RadioButton;
+            burning_ship_radiobutton: RadioButton;
+
+            f32_radiobutton: RadioButton;
+            f64_radiobutton: RadioButton;
+            f128_radiobutton: RadioButton;
+
+            reset_button: Button;
+            drawing_area: DrawingArea;
+        };
+
+
+        let screen = gtk::gdk::Screen::default().unwrap();
+        let entry_red_background_style = CssProvider::new();
+        entry_red_background_style
+            .load_from_data(b".bad { background-image: image(red); }")
+            .unwrap();
+        StyleContext::add_provider_for_screen(
+            &screen,
+            &entry_red_background_style,
+            gtk::STYLE_PROVIDER_PRIORITY_USER,
+        );
 
         // let img_watched = Watched::new(None::<RgbImage>);
         // let img_watcher = img_watched.watch();
@@ -105,35 +155,31 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
             scale_entry,
             max_iterations_entry,
             hue_scale_entry,
+
+            mandelbrot_radiobutton,
+            burning_ship_radiobutton,
+
+            f32_radiobutton,
+            f64_radiobutton,
+            f128_radiobutton,
             img: img_rc.clone(),
         });
 
         // Initialize entries to initial (default) config values.
-        state.update_entries();
+        state.update_widgets();
 
         macro_rules! make_reader_entry_callback {
-            ( $range:ident $(. $idx:tt)?: $t:ty ) => {{
+            ( $field:ident $(. $idx:tt)?: $t:ty ) => {{
                 let state = Rc::clone(&state);
                 move |val: $t| {
                     eprintln!("TODO: If this callback is a result of a programmatic change, don't update(?)");
                     state.config.update(|config| {
-                        config.$range $(.$idx)? = val;
+                        config.$field $(.$idx)? = val;
                         true
                     });
                 }
             }};
         }
-
-        let screen = gtk::gdk::Screen::default().unwrap();
-        let entry_red_background_style = CssProvider::new();
-        entry_red_background_style
-            .load_from_data(b".bad { background-image: image(red); }")
-            .unwrap();
-        StyleContext::add_provider_for_screen(
-            &screen,
-            &entry_red_background_style,
-            gtk::STYLE_PROVIDER_PRIORITY_USER,
-        );
 
         {
             make_reader_entry(
@@ -161,10 +207,42 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
                         *config = Config { size, ..Config::default() };
                         true
                     });
-                    state.update_entries();
+                    state.update_widgets();
                 }
             });
         }
+
+        macro_rules! setup_enum_radiobutton_callback {
+            ( $button:ident: $field:ident = $value:expr ) => {
+                state.$button.connect_toggled({
+                    let state = Rc::clone(&state);
+                    move |this| {
+                        if !this.is_active() { return; }
+                        state.config.update(|config| {
+                            config.$field = $value;
+                            true
+                        });
+                    }
+                });
+            };
+        }
+
+        setup_enum_radiobutton_callback!(
+            f32_radiobutton: precision = Precision::Single
+        );
+        setup_enum_radiobutton_callback!(
+            f64_radiobutton: precision = Precision::Double
+        );
+        setup_enum_radiobutton_callback!(
+            f128_radiobutton: precision = Precision::Quad
+        );
+
+        setup_enum_radiobutton_callback!(
+            mandelbrot_radiobutton: fractal = Fractal::Mandelbrot
+        );
+        setup_enum_radiobutton_callback!(
+            burning_ship_radiobutton: fractal = Fractal::BurningShip
+        );
 
         fn coordinate_convert(
             center: (f64, f64),
@@ -196,7 +274,7 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
                     true
                 });
 
-                state.update_entries();
+                state.update_widgets();
             }
         };
 
@@ -226,7 +304,7 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
                     true
                 });
 
-                state.update_entries();
+                state.update_widgets();
             }
         };
 
@@ -335,6 +413,8 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
             }
         });
 
+        eprintln!("TODO: Parameter space vs Seed space (see https://youtu.be/LqbZpur38nw)");
+
         window.connect_destroy({
             let _state = Rc::clone(&state);
             move |_this| {
@@ -354,7 +434,7 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
                             break
                         },
                     };
-                    let img = unblock(move || generate_mandelbrot(config)).await;
+                    let img = unblock(move || generate(config)).await;
                     *img_rc.borrow_mut() = Some(img);
                     drawing_area.queue_draw();
                 }

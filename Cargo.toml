@@ -3,3 +3,6 @@ members = [
     "mandelbrot",
     "watch",
 ]
+
+[profile.dev]
+opt-level = 1

@@ -2,6 +2,20 @@ use std::ops::ControlFlow;
 
 use image::{Rgb, RgbImage};
 use num_complex::Complex;
+use num_traits::{Num, NumCast, Float};
+
+#[derive(Debug, Clone, Copy)]
+pub enum Precision {
+    Single,
+    Double,
+    Quad,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum Fractal {
+    Mandelbrot,
+    BurningShip,
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct Config {
@@ -10,6 +24,8 @@ pub struct Config {
     pub center: (f64, f64),
     pub zoom: f64,
     pub hue_scale: f64,
+    pub precision: Precision,
+    pub fractal: Fractal,
 }
 
 impl Default for Config {
@@ -20,6 +36,8 @@ impl Default for Config {
             center: (-0.75, 0.0),
             zoom: 192.0,
             hue_scale: 60.0,
+            precision: Precision::Single,
+            fractal: Fractal::Mandelbrot,
         }
     }
 }
@@ -39,10 +57,11 @@ fn fraction_to_hue(x: f64) -> Rgb<u8> {
     }
 }
 
-pub fn generate_with<F, G>(config: Config, iteration_fn_maker: F) -> RgbImage
+pub fn generate_with<T, F, G>(config: Config, iteration_fn_maker: F) -> RgbImage
     where
-        F: Fn(Complex<f64>) -> G,
-        G: Fn(Complex<f64>) -> Complex<f64>,
+        T: Clone + Num + PartialOrd + NumCast,
+        F: Fn(Complex<T>) -> G,
+        G: Fn(Complex<T>) -> Complex<T>,
 {
     let Config {
         size: (width, height),
@@ -54,18 +73,23 @@ pub fn generate_with<F, G>(config: Config, iteration_fn_maker: F) -> RgbImage
     } = config;
     let width = width.try_into().unwrap();
     let height = height.try_into().unwrap();
+    let zoom = T::from(zoom).unwrap();
+    let cy = T::from(cy).unwrap();
+    let cx = T::from(cx).unwrap();
 
     let mut img = image::RgbImage::new(width, height);
+    let limit = T::from(4.0).unwrap();
+    let zero = T::from(0.0).unwrap();
     for y in 0..height {
-        let im = cy + (y as f64 - height as f64 / 2.0) / zoom;
+        let im: T = cy.clone() + T::from(y as f64 - height as f64 / 2.0).unwrap() / zoom.clone();
         for x in 0..width {
-            let re = cx + (x as f64 - width as f64 / 2.0) / zoom;
-            let c = Complex { re, im };
+            let re: T = cx.clone() + T::from(x as f64 - width as f64 / 2.0).unwrap() / zoom.clone();
+            let c = Complex { re, im: im.clone() };
             let f = iteration_fn_maker(c);
             let iterations =
-                (0..max_iterations).try_fold(Complex::new(0.0, 0.0), |val, iteration| {
+                (0..max_iterations).try_fold(Complex::new(zero.clone(), zero.clone()), |val, iteration| {
                     let val = f(val);
-                    if val.norm_sqr() > 4.0 {
+                    if val.norm_sqr() > limit {
                         ControlFlow::Break(iteration)
                     } else {
                         ControlFlow::Continue(val)
@@ -84,19 +108,46 @@ pub fn generate_with<F, G>(config: Config, iteration_fn_maker: F) -> RgbImage
     img
 }
 
-pub fn generate_mandelbrot(config: Config) -> RgbImage {
-    generate_with(config, |c: Complex<f64>| {
-        move |z: Complex<f64>| {
-            z * z + c
+pub fn generate_mandelbrot_precision<T>(config: Config) -> RgbImage
+    where
+        T: Clone + Num + PartialOrd + NumCast
+{
+    generate_with(config, |c: Complex<T>| {
+        move |z: Complex<T>| {
+            z.clone() * z + c.clone()
         }
     })
 }
+pub fn generate_mandelbrot(config: Config) -> RgbImage {
+    match config.precision {
+        Precision::Single => generate_mandelbrot_precision::<f32>(config),
+        Precision::Double => generate_mandelbrot_precision::<f64>(config),
+        Precision::Quad => generate_mandelbrot_precision::<f128::f128>(config),
+    }
+}
 
-pub fn generate_burning_ship(config: Config) -> RgbImage {
-    generate_with(config, |c: Complex<f64>| {
-        move |z: Complex<f64>| {
+pub fn generate_burning_ship_precision<T>(config: Config) -> RgbImage
+where
+    T: Clone + Num + PartialOrd + NumCast + Float
+{
+    generate_with(config, |c: Complex<T>| {
+        move |z: Complex<T>| {
             let z = Complex { re: z.re.abs(), im: z.im.abs() };
             z * z + c
         }
     })
+}
+pub fn generate_burning_ship(config: Config) -> RgbImage {
+    match config.precision {
+        Precision::Single => generate_burning_ship_precision::<f32>(config),
+        Precision::Double => generate_burning_ship_precision::<f64>(config),
+        Precision::Quad => generate_burning_ship_precision::<f128::f128>(config),
+    }
+}
+
+pub fn generate(config: Config) -> RgbImage {
+    match config.fractal {
+        Fractal::Mandelbrot => generate_mandelbrot(config),
+        Fractal::BurningShip => generate_burning_ship(config),
+    }
 }
