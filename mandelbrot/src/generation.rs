@@ -1,5 +1,6 @@
-use std::ops::ControlFlow;
+use std::{ops::ControlFlow, sync::Arc};
 
+use f128::f128;
 use image::{Rgb, RgbImage};
 use num_complex::Complex;
 use num_traits::{Num, NumCast, Float};
@@ -11,13 +12,30 @@ pub enum Precision {
     Quad,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone)]
 pub enum Fractal {
     Mandelbrot,
     BurningShip,
+    #[cfg(feature = "custom_fractals")]
+    Custom {
+        single: Arc<dyn Sync + Send + Fn(Complex<f32>) -> Box<dyn FnMut(Complex<f32>) -> Complex<f32>>>,
+        double: Arc<dyn Sync + Send + Fn(Complex<f64>) -> Box<dyn FnMut(Complex<f64>) -> Complex<f64>>>,
+        quad: Arc<dyn Sync + Send + Fn(Complex<f128>) -> Box<dyn FnMut(Complex<f128>) -> Complex<f128>>>,
+    }
 }
 
-#[derive(Debug, Clone, Copy)]
+impl std::fmt::Debug for Fractal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Mandelbrot => write!(f, "Mandelbrot"),
+            Self::BurningShip => write!(f, "BurningShip"),
+            #[cfg(feature = "custom_fractals")]
+            Self::Custom { .. } => write!(f, "Custom"),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Config {
     pub size: (i32, i32),
     pub max_iterations: u32,
@@ -60,7 +78,7 @@ fn fraction_to_hue(x: f64) -> Rgb<u8> {
 pub fn generate_with<T, F, G>(config: Config, iteration_fn_maker: F) -> RgbImage
     where
         T: Clone + Num + PartialOrd + NumCast,
-        F: Fn(Complex<T>) -> G,
+        F: Clone + Fn(Complex<T>) -> G,
         G: FnMut(Complex<T>) -> Complex<T>,
 {
     let Config {
@@ -122,7 +140,7 @@ pub fn generate_mandelbrot(config: Config) -> RgbImage {
     match config.precision {
         Precision::Single => generate_mandelbrot_precision::<f32>(config),
         Precision::Double => generate_mandelbrot_precision::<f64>(config),
-        Precision::Quad => generate_mandelbrot_precision::<f128::f128>(config),
+        Precision::Quad => generate_mandelbrot_precision::<f128>(config),
     }
 }
 
@@ -141,13 +159,29 @@ pub fn generate_burning_ship(config: Config) -> RgbImage {
     match config.precision {
         Precision::Single => generate_burning_ship_precision::<f32>(config),
         Precision::Double => generate_burning_ship_precision::<f64>(config),
-        Precision::Quad => generate_burning_ship_precision::<f128::f128>(config),
+        Precision::Quad => generate_burning_ship_precision::<f128>(config),
     }
 }
 
 pub fn generate(config: Config) -> RgbImage {
-    match config.fractal {
+    match &config.fractal {
         Fractal::Mandelbrot => generate_mandelbrot(config),
         Fractal::BurningShip => generate_burning_ship(config),
+        #[cfg(feature = "custom_fractals")]
+        Fractal::Custom { single, double, quad } => match config.precision {
+            Precision::Single => {
+                let single = single.clone();
+                generate_with(config, move |val| single(val))
+            }
+            Precision::Double => {
+                let double = double.clone();
+                generate_with(config, move |val| double(val))
+            }
+            Precision::Quad => {
+                let quad = quad.clone();
+                generate_with(config, move |val| quad(val))
+            }
+        },
+        
     }
 }

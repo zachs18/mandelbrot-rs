@@ -91,6 +91,8 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
                 match config.fractal {
                     Fractal::Mandelbrot => self.mandelbrot_radiobutton.set_active(true),
                     Fractal::BurningShip => self.burning_ship_radiobutton.set_active(true),
+                    #[cfg(feature = "custom_fractals")]
+                    Fractal::Custom { .. } => todo!(),
                 }
 
                 match config.precision {
