@@ -13,9 +13,9 @@ use gtk::{
         ApplicationExt, ApplicationExtManual, BuilderExtManual, CssProviderExt,
         GdkContextExt, WidgetExtManual,
     },
-    traits::{EntryExt, GtkApplicationExt, StyleContextExt, WidgetExt, ButtonExt, ToggleButtonExt},
+    traits::{EntryExt, GtkApplicationExt, StyleContextExt, WidgetExt, ButtonExt, ToggleButtonExt, TextViewExt, TextBufferExt},
     Application, Builder, CssProvider, DrawingArea, EditableSignals, Entry, Inhibit, StyleContext,
-    Window, Button, RadioButton,
+    Window, Button, RadioButton, TextView,
 };
 use image::RgbImage;
 use watch::local::Watched;
@@ -130,6 +130,7 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
 
             reset_button: Button;
             drawing_area: DrawingArea;
+            progress_text_view: TextView;
         };
 
 
@@ -427,6 +428,7 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
             let mut config = state.config.watch();
             let drawing_area = drawing_area.clone();
             async move {
+                let progress_text_buffer = progress_text_view.buffer().unwrap();
                 loop {
                     let config = match config.watch().await {
                         Ok(config) => config,
@@ -434,7 +436,9 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
                             break
                         },
                     };
+                    progress_text_buffer.set_text("Working...");
                     let img = unblock(move || generate(config)).await;
+                    progress_text_buffer.set_text("Done.");
                     *img_rc.borrow_mut() = Some(img);
                     drawing_area.queue_draw();
                 }

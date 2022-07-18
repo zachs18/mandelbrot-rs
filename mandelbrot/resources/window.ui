@@ -238,7 +238,15 @@
               </packing>
             </child>
             <child>
-              <placeholder/>
+              <object class="GtkTextView" id="progress_text_view">
+                <property name="visible">True</property>
+                <property name="can_focus">True</property>
+                <property name="editable">False</property>
+              </object>
+              <packing>
+                <property name="left_attach">0</property>
+                <property name="top_attach">10</property>
+              </packing>
             </child>
           </object>
           <packing>

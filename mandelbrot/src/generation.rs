@@ -61,7 +61,7 @@ pub fn generate_with<T, F, G>(config: Config, iteration_fn_maker: F) -> RgbImage
     where
         T: Clone + Num + PartialOrd + NumCast,
         F: Fn(Complex<T>) -> G,
-        G: Fn(Complex<T>) -> Complex<T>,
+        G: FnMut(Complex<T>) -> Complex<T>,
 {
     let Config {
         size: (width, height),
@@ -85,7 +85,7 @@ pub fn generate_with<T, F, G>(config: Config, iteration_fn_maker: F) -> RgbImage
         for x in 0..width {
             let re: T = cx.clone() + T::from(x as f64 - width as f64 / 2.0).unwrap() / zoom.clone();
             let c = Complex { re, im: im.clone() };
-            let f = iteration_fn_maker(c);
+            let mut f = iteration_fn_maker(c);
             let iterations =
                 (0..max_iterations).try_fold(Complex::new(zero.clone(), zero.clone()), |val, iteration| {
                     let val = f(val);
