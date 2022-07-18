@@ -2,6 +2,8 @@
 members = [
     "mandelbrot",
     "watch",
+    "loader",
+    "compile-in-memory",
 ]
 
 [profile.dev]

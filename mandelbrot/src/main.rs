@@ -1,10 +1,11 @@
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
-    str::FromStr,
+    str::FromStr, sync::Arc,
 };
 
 use blocking::unblock;
+use f128::f128;
 use gtk::{
     gdk::{EventMask, EventType},
     gdk_pixbuf::Pixbuf,
@@ -15,9 +16,14 @@ use gtk::{
     },
     traits::{EntryExt, GtkApplicationExt, StyleContextExt, WidgetExt, ButtonExt, ToggleButtonExt, TextViewExt, TextBufferExt},
     Application, Builder, CssProvider, DrawingArea, EditableSignals, Entry, Inhibit, StyleContext,
-    Window, Button, RadioButton, TextView,
+    Window, Button, RadioButton, TextView, Grid,
 };
+#[cfg(not(feature = "custom_fractals"))]
+use gtk::traits::ContainerExt;
 use image::RgbImage;
+use loader::AssertSendSyncExt;
+use num_complex::Complex;
+use num_traits::Zero;
 use watch::local::Watched;
 
 mod generation;
@@ -69,6 +75,11 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
 
             mandelbrot_radiobutton: RadioButton,
             burning_ship_radiobutton: RadioButton,
+            #[cfg(feature = "custom_fractals")]
+            custom_fractal_radiobutton: RadioButton,
+
+            #[cfg(feature = "custom_fractals")]
+            custom_fractal_text_view: TextView,
 
             f32_radiobutton: RadioButton,
             f64_radiobutton: RadioButton,
@@ -92,7 +103,7 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
                     Fractal::Mandelbrot => self.mandelbrot_radiobutton.set_active(true),
                     Fractal::BurningShip => self.burning_ship_radiobutton.set_active(true),
                     #[cfg(feature = "custom_fractals")]
-                    Fractal::Custom { .. } => todo!(),
+                    Fractal::Custom { .. } => self.custom_fractal_radiobutton.set_active(true),
                 }
 
                 match config.precision {
@@ -108,8 +119,9 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
         let builder = Builder::from_resource("/zachs18/mandelbrot/window.ui");
 
         macro_rules! get_widgets {
-            ( $($name:ident: $ty:ty;)* ) => {
+            ( $( $(#[$($attr:tt)*])* $name:ident: $ty:ty;)* ) => {
                 $(
+                    $(#[$($attr)*])*
                     let $name: $ty = builder.object(stringify!($name)).unwrap();
                 )*
             }
@@ -117,6 +129,11 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
 
         get_widgets!{
             window: Window;
+            #[allow(unused_variables)]
+            control_grid: Grid;
+            #[allow(unused_variables)]
+            custom_fractal_text_view_box: gtk::Box;
+
             centerx_entry: Entry;
             centery_entry: Entry;
             scale_entry: Entry;
@@ -125,6 +142,11 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
 
             mandelbrot_radiobutton: RadioButton;
             burning_ship_radiobutton: RadioButton;
+            #[cfg(feature = "custom_fractals")]
+            custom_fractal_radiobutton: RadioButton;
+
+            #[cfg(feature = "custom_fractals")]
+            custom_fractal_text_view: TextView;
 
             f32_radiobutton: RadioButton;
             f64_radiobutton: RadioButton;
@@ -135,6 +157,11 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
             progress_text_view: TextView;
         };
 
+        #[cfg(not(feature = "custom_fractals"))]
+        {
+            control_grid.remove(&custom_fractal_radiobutton);
+            control_grid.remove(&custom_fractal_text_view_box);
+        }
 
         let screen = gtk::gdk::Screen::default().unwrap();
         let entry_red_background_style = CssProvider::new();
@@ -161,6 +188,11 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
 
             mandelbrot_radiobutton,
             burning_ship_radiobutton,
+            #[cfg(feature = "custom_fractals")]
+            custom_fractal_radiobutton,
+
+            #[cfg(feature = "custom_fractals")]
+            custom_fractal_text_view,
 
             f32_radiobutton,
             f64_radiobutton,
@@ -246,6 +278,71 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
         setup_enum_radiobutton_callback!(
             burning_ship_radiobutton: fractal = Fractal::BurningShip
         );
+        state.custom_fractal_radiobutton.connect_toggled({
+            let state = Rc::clone(&state);
+            let buffer = state.custom_fractal_text_view.buffer().unwrap();
+            move |this| {
+                if !this.is_active() { return; }
+                state.config.update(|config| {
+                    let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).unwrap();
+                    let handle = match compile_in_memory::compile(
+                        "gcc",
+                        &text,
+                        "c",
+                        compile_in_memory::OptimizationLevel::Two,
+                        false,
+                    ) {
+                        Ok(handle) => Arc::new(handle),
+                        Err(_) => todo!(),
+                    };
+                    eprintln!("TODO: Update these when the text changes.");
+                    eprintln!("TODO: handle errors gracefully.");
+                    eprintln!("TODO: make a minilanguage/parser and generate the three functions");
+
+                    type Callback<T> = extern "C" fn(*mut Complex<T>, *const Complex<T>, *const Complex<T>);
+
+                    let single = handle.sym_func_owned::<Callback<f32>>(loader::c_str!("func32")).unwrap();
+                    let double = handle.sym_func_owned::<Callback<f64>>(loader::c_str!("func64")).unwrap();
+                    let quad = handle.sym_func_owned::<Callback<f128>>(loader::c_str!("func128")).unwrap();
+
+                    let single = unsafe { single.assert_shared().assert_send_sync() };
+                    let double = unsafe { double.assert_shared().assert_send_sync() };
+                    let quad = unsafe { quad.assert_shared().assert_send_sync() };
+
+                    let single = move |c: Complex<f32>| {
+                        let single = single.clone();
+                        Box::new(move |z: Complex<f32>| {
+                            let mut result = Complex::zero();
+                            single(&mut result, &c, &z);
+                            result
+                        }) as Box<dyn FnMut(Complex<f32>) -> Complex<f32> + 'static>
+                    };
+                    let double = move |c: Complex<f64>| {
+                        let double = double.clone();
+                        Box::new(move |z: Complex<f64>| {
+                            let mut result = Complex::zero();
+                            double(&mut result, &c, &z);
+                            result
+                        }) as Box<dyn FnMut(Complex<f64>) -> Complex<f64> + 'static>
+                    };
+                    let quad = move |c: Complex<f128>| {
+                        let quad = quad.clone();
+                        Box::new(move |z: Complex<f128>| {
+                            let mut result = Complex::zero();
+                            quad(&mut result, &c, &z);
+                            result
+                        }) as Box<dyn FnMut(Complex<f128>) -> Complex<f128> + 'static>
+                    };
+
+                    config.fractal = Fractal::Custom {
+                        single: Arc::new(single),
+                        double: Arc::new(double),
+                        quad: Arc::new(quad),
+                    };
+                    true
+                });
+            }
+        });
 
         fn coordinate_convert(
             center: (f64, f64),

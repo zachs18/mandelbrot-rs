@@ -4,7 +4,8 @@ version = "0.2.0"
 edition = "2021"
 
 [features]
-custom_fractals = []
+default = ["custom_fractals"]
+custom_fractals = ["loader", "compile-in-memory"]
 
 [dependencies]
 image = "0.24"
@@ -12,11 +13,26 @@ num-complex = "0.4"
 gtk = "0.15"
 blocking = "1.2"
 num-traits = "0.2.15"
-f128 = "0.2.9"
+
+# Alignment bugfix not yet on crates.io
+[dependencies.f128]
+# version = "0.2.10"
+git = "https://github.com/jkarns275/f128"
+rev = "2065957660a7c6cb5148da550ef1b532ab8227da"
 
 [dependencies.watch]
 package = "watch"
 path = "../watch"
+
+[dependencies.loader]
+optional = true
+package = "loader"
+path = "../loader"
+
+[dependencies.compile-in-memory]
+optional = true
+package = "compile-in-memory"
+path = "../compile-in-memory"
 
 [build-dependencies]
 gio = "0.15"
