@@ -1,4 +1,4 @@
-use std::{fs::File, os::unix::prelude::FromRawFd, io::Write, ffi::{CString, CStr}};
+use std::{fs::File, os::unix::prelude::FromRawFd, io::Write, ffi::{CString, CStr}, process::{Command, Stdio}};
 
 use loader::{Library, c_str};
 
@@ -79,7 +79,12 @@ pub fn compile(compiler: &str, source: &str, language: &str, optimization: Optim
         args.push("-g");
     }
     
-    let handle = std::process::Command::new(compiler).args(args).spawn()?;
+    let handle = Command::new(compiler)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .args(args)
+        .spawn()?;
 
     let mut x = handle.wait_with_output()?;
 
