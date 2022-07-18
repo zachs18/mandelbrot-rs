@@ -1,0 +1,16 @@
+.bad {
+    background-image: image(red);
+    background-color: red;
+}
+.bad text {
+    background-image: image(red);
+    background-color: red;
+}
+.unused {
+    background-image: image(grey);
+    background-color: grey;
+}
+.unused text {
+    background-image: image(grey);
+    background-color: grey;
+}

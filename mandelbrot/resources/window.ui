@@ -304,6 +304,9 @@ void func128(
                         <property name="wrap_mode">word</property>
                         <property name="buffer">textbuffer1</property>
                         <property name="monospace">True</property>
+                        <style>
+                          <class name="unused"/>
+                        </style>
                       </object>
                     </child>
                   </object>

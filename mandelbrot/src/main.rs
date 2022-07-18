@@ -1,7 +1,7 @@
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
-    str::FromStr, sync::Arc,
+    str::FromStr, sync::Arc, ffi::CString,
 };
 
 use blocking::unblock;
@@ -165,9 +165,7 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
 
         let screen = gtk::gdk::Screen::default().unwrap();
         let entry_red_background_style = CssProvider::new();
-        entry_red_background_style
-            .load_from_data(b".bad { background-image: image(red); }")
-            .unwrap();
+        entry_red_background_style.load_from_resource("/zachs18/mandelbrot/main.css");
         StyleContext::add_provider_for_screen(
             &screen,
             &entry_red_background_style,
@@ -278,11 +276,16 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
         setup_enum_radiobutton_callback!(
             burning_ship_radiobutton: fractal = Fractal::BurningShip
         );
-        state.custom_fractal_radiobutton.connect_toggled({
+        let custom_fractal_compile = {
             let state = Rc::clone(&state);
             let buffer = state.custom_fractal_text_view.buffer().unwrap();
-            move |this| {
-                if !this.is_active() { return; }
+            move || {
+                let ctx = state.custom_fractal_text_view.style_context();
+                if !state.custom_fractal_radiobutton.is_active() {
+                    ctx.add_class("unused");
+                    return;
+                }
+                ctx.remove_class("unused");
                 state.config.update(|config| {
                     let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).unwrap();
                     let handle = match compile_in_memory::compile(
@@ -293,17 +296,26 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
                         false,
                     ) {
                         Ok(handle) => Arc::new(handle),
-                        Err(_) => todo!(),
+                        Err(_) => {
+                            ctx.add_class("bad");
+                            return false;
+                        },
                     };
-                    eprintln!("TODO: Update these when the text changes.");
-                    eprintln!("TODO: handle errors gracefully.");
                     eprintln!("TODO: make a minilanguage/parser and generate the three functions");
 
                     type Callback<T> = extern "C" fn(*mut Complex<T>, *const Complex<T>, *const Complex<T>);
 
-                    let single = handle.sym_func_owned::<Callback<f32>>(loader::c_str!("func32")).unwrap();
-                    let double = handle.sym_func_owned::<Callback<f64>>(loader::c_str!("func64")).unwrap();
-                    let quad = handle.sym_func_owned::<Callback<f128>>(loader::c_str!("func128")).unwrap();
+                    let (single, double, quad) = match (|| Ok::<_, CString>((
+                        handle.sym_func_owned::<Callback<f32>>(loader::c_str!("func32"))?,
+                        handle.sym_func_owned::<Callback<f64>>(loader::c_str!("func64"))?,
+                        handle.sym_func_owned::<Callback<f128>>(loader::c_str!("func128"))?,
+                    )))() {
+                        Ok(funcs) => funcs,
+                        Err(_) => {
+                            ctx.add_class("bad");
+                            return false;
+                        },
+                    };
 
                     let single = unsafe { single.assert_shared().assert_send_sync() };
                     let double = unsafe { double.assert_shared().assert_send_sync() };
@@ -339,9 +351,18 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
                         double: Arc::new(double),
                         quad: Arc::new(quad),
                     };
+                    ctx.remove_class("bad");
                     true
                 });
             }
+        };
+        state.custom_fractal_radiobutton.connect_toggled({
+            let custom_fractal_compile = custom_fractal_compile.clone();
+            move |_| custom_fractal_compile()
+        });
+        state.custom_fractal_text_view.buffer().unwrap().connect_changed({
+            let custom_fractal_compile = custom_fractal_compile.clone();
+            move |_| custom_fractal_compile()
         });
 
         fn coordinate_convert(
