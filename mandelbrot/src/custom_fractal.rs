@@ -136,6 +136,12 @@ pub fn compile(src: &str) -> Result<Library, ()> {
         _ => return Err(()),
     };
 
+    static TODO_ONCE: std::sync::Once = std::sync::Once::new();
+    TODO_ONCE.call_once(|| {
+        eprintln!("TODO: absolute value (& maybe trig)");
+        eprintln!("      using GCC libquadmath");
+    });
+
     let mut source = String::with_capacity(4096);
     definition.translate(FloatType::F32, &mut source).map_err(debug_and_ignore!())?;
     definition.translate(FloatType::F64, &mut source).map_err(debug_and_ignore!())?;

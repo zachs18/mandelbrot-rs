@@ -1,7 +1,7 @@
 use nom::{IResult, multi::{separated_list0, many0}, sequence::{tuple, delimited, preceded}, Parser, Finish, branch::alt, combinator::{opt, map_res}};
 
 use super::{
-    lexer::{LexError, Token, TokenKind},
+    lexer::{Token, TokenKind},
     Op, Component,
 };
 
@@ -25,13 +25,10 @@ pub(super) enum Expression<'src> {
 pub(super) enum ParseError<'tok, 'src> {
     Ident,
     Literal,
-    AnyOp,
     Op(Op),
-    Token(Token<'static>),
     TokenKind(TokenKind),
     InvalidField(&'src str),
     ExtraInput(&'tok [Token<'src>]),
-    LexError(LexError<'src>),
     Other(nom::error::Error<&'tok [Token<'src>]>),
 }
 
@@ -73,17 +70,6 @@ fn literal<'tok, 'src>(
     }
 }
 
-fn any_op<'tok, 'src>(
-    input: &'tok [Token<'src>],
-) -> IResult<&'tok [Token<'src>], Op, ParseError<'tok, 'src>> {
-    match input.split_first() {
-        Some(((TokenKind::Op(op), _), rest)) => Ok((rest, *op)),
-        _ => Err(nom::Err::Error(
-            ParseError::AnyOp
-        )),
-    }
-}
-
 fn op(
     op: Op,
 ) -> impl for<'tok, 'src> FnMut(&'tok [Token<'src>]) -> IResult<&'tok [Token<'src>], Op, ParseError<'tok, 'src>>
@@ -92,18 +78,6 @@ fn op(
         Some(((TokenKind::Op(found_op), _), rest)) if *found_op == op => Ok((rest, op)),
         _ => Err(nom::Err::Error(
             ParseError::Op(op)
-        )),
-    }
-}
-
-fn token(
-    tok: Token<'static>,
-) -> impl for<'tok, 'src> FnMut(&'tok [Token<'src>]) -> IResult<&'tok [Token<'src>], Token<'src>, ParseError<'tok, 'src>>
-{
-    move |input| match input.split_first() {
-        Some((token, rest)) if *token == tok => Ok((rest, *token)),
-        _ => Err(nom::Err::Error(
-            ParseError::Token(tok)
         )),
     }
 }
@@ -142,7 +116,7 @@ fn function_definition<'tok, 'src>(
 /// Precedence
 /// * / (left-to-right, 5 / 3 / 3 = (5 / 3) / 3)
 /// + - (left-to-right, 5 - 3 - 3 = (5 - 3) - 3)
-/// 
+///
 /// Grammar:
 /// expression: add_expression
 /// add_expression: add_expression (add_op multiply_expression)?
