@@ -44,6 +44,21 @@ impl FloatType {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+enum Component {
+    Real,
+    Imag,
+}
+
+impl Component {
+    fn extract_op(self) -> &'static str {
+        match self {
+            Component::Real => "__real__",
+            Component::Imag => "__imag__",
+        }
+    }
+}
+
 /// Always put a space before something if it could combine
 trait Translate {
     fn translate(&self, float_type: FloatType, f: &mut String) -> std::fmt::Result;
@@ -61,6 +76,11 @@ impl<'src> Translate for Expression<'src> {
                 lhs.translate(float_type, f)?;
                 op.translate(float_type, f)?;
                 rhs.translate(float_type, f)
+            },
+            Expression::Component(expr, component) => {
+                f.write_fmt(format_args!("({}(", component.extract_op()))?;
+                expr.translate(float_type, f)?;
+                f.write_str("))")
             },
         }
     }

@@ -16,6 +16,7 @@ pub(super) enum TokenKind {
     LParen,
     RParen,
     Comma,
+    Period,
     Ident,
     Literal,
 }
@@ -44,9 +45,10 @@ fn op(input: &str) -> IResult<&str, Token> {
 token_fn!(punct_lparen: "(" => TokenKind::LParen);
 token_fn!(punct_rparen: ")" => TokenKind::RParen);
 token_fn!(punct_comma: "," => TokenKind::Comma);
+token_fn!(punct_period: "." => TokenKind::Period);
 
 fn punct(input: &str) -> IResult<&str, Token> {
-    alt((punct_lparen, punct_rparen, punct_comma))(input)
+    alt((punct_lparen, punct_rparen, punct_comma, punct_period))(input)
 }
 
 fn ident(input: &str) -> IResult<&str, Token> {

@@ -1,8 +1,8 @@
-use nom::{IResult, multi::{separated_list0, many0}, sequence::{tuple, delimited}, Parser, Finish, branch::alt};
+use nom::{IResult, multi::{separated_list0, many0}, sequence::{tuple, delimited, preceded}, Parser, Finish, branch::alt, combinator::{opt, map_res}};
 
 use super::{
     lexer::{LexError, Token, TokenKind},
-    Op,
+    Op, Component,
 };
 
 pub struct FunctionDefinition<'src> {
@@ -11,11 +11,14 @@ pub struct FunctionDefinition<'src> {
     pub(super) body: Expression<'src>,
 }
 
+#[derive(Debug, Clone)]
 pub(super) enum Expression<'src> {
     Literal(&'src str),
     Variable(&'src str),
     UnaryOp(Op, Box<Expression<'src>>),
     BinOp(Box<Expression<'src>>, Op, Box<Expression<'src>>),
+    /// Used for .re and .im
+    Component(Box<Expression<'src>>, Component),
 }
 
 #[derive(Debug)]
@@ -26,6 +29,7 @@ pub(super) enum ParseError<'tok, 'src> {
     Op(Op),
     Token(Token<'static>),
     TokenKind(TokenKind),
+    InvalidField(&'src str),
     ExtraInput(&'tok [Token<'src>]),
     LexError(LexError<'src>),
     Other(nom::error::Error<&'tok [Token<'src>]>),
@@ -38,6 +42,12 @@ impl<'tok, 'src> nom::error::ParseError<&'tok [Token<'src>]> for ParseError<'tok
 
     fn append(_input: &'tok [Token<'src>], _kind: nom::error::ErrorKind, other: Self) -> Self {
         other
+    }
+}
+
+impl<'tok, 'src> nom::error::FromExternalError<&'tok [Token<'src>], ParseError<'tok, 'src>> for ParseError<'tok, 'src> {
+    fn from_external_error(_: &'tok [Token<'src>], _: nom::error::ErrorKind, e: ParseError<'tok, 'src>) -> Self {
+        e
     }
 }
 
@@ -137,7 +147,8 @@ fn function_definition<'tok, 'src>(
 /// expression: add_expression
 /// add_expression: add_expression (add_op multiply_expression)?
 /// multiply_expression: multiply_expression (multiply_op unary_expression)?
-/// unary_expression: (unary_op)* unit_expression
+/// unary_expression: (unary_op)* field_expression
+/// field_expression: unit_expression ('.' ident)?
 /// unit_expression: '(' expression ')'
 ///                | variable
 ///                | literal
@@ -184,7 +195,7 @@ fn unary_expression<'tok, 'src>(
     input: &'tok [Token<'src>],
 ) -> IResult<&'tok [Token<'src>], Expression<'src>, ParseError<'tok, 'src>> {
     let unary_op = alt((op(Op::Minus), op(Op::Conjugate)));
-    let unary_tail = unit_expression;
+    let unary_tail = field_expression;
     tuple((
         many0(unary_op),
         unary_tail,
@@ -194,6 +205,27 @@ fn unary_expression<'tok, 'src>(
         }
         tail
     }).parse(input)
+}
+
+fn field_expression<'tok, 'src>(
+    input: &'tok [Token<'src>],
+) -> IResult<&'tok [Token<'src>], Expression<'src>, ParseError<'tok, 'src>> {
+    map_res(
+        tuple((
+            unit_expression,
+            opt(preceded(
+                token_kind(TokenKind::Period), ident
+            )),
+        )),
+        |(expr, field)| {
+            match field {
+                Some("re") | Some("real") => Ok(Expression::Component(expr.into(), Component::Real)),
+                Some("im") | Some("imag") => Ok(Expression::Component(expr.into(), Component::Imag)),
+                None => Ok(expr),
+                Some(field) => Err(ParseError::InvalidField(field))as Result<Expression, _>,
+            }
+        },
+    ).parse(input)
 }
 
 fn unit_expression<'tok, 'src>(
