@@ -203,11 +203,14 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
         // Initialize entries to initial (default) config values.
         state.update_widgets();
 
+        static TODO_ONCE: std::sync::Once = std::sync::Once::new();
         macro_rules! make_reader_entry_callback {
             ( $field:ident $(. $idx:tt)?: $t:ty ) => {{
                 let state = Rc::clone(&state);
                 move |val: $t| {
-                    eprintln!("TODO: If this callback is a result of a programmatic change, don't update(?)");
+                    TODO_ONCE.call_once(|| {
+                        eprintln!("TODO: If this callback is a result of a programmatic change, don't update(?)");
+                    });
                     state.config.update(|config| {
                         config.$field $(.$idx)? = val;
                         true
@@ -609,7 +612,10 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
                 } else {
                     dbg!("Failed to get img");
                 }
-                eprintln!("TODO: when zooming, use a zoomed version of old image while new image is being generated");
+                static TODO_ONCE: std::sync::Once = std::sync::Once::new();
+                TODO_ONCE.call_once(|| {
+                    eprintln!("TODO: when zooming, use a zoomed version of old image while new image is being generated");
+                });
                 Inhibit(true)
             }
         });
