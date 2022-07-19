@@ -6,27 +6,7 @@
     <property name="ignore_hidden">True</property>
   </object>
   <object class="GtkTextBuffer" id="textbuffer1">
-    <property name="text" translatable="yes">void func32(
-	_Complex float *result,
-	const _Complex float *c,
-	const _Complex float *z
-) {
-	*result = *z * *z * *z + *c;
-}
-void func64(
-	_Complex double *result,
-	const _Complex double *c,
-	const _Complex double *z
-) {
-	*result = *z * *z * *z + *c;
-}
-void func128(
-	_Complex _Float128 *result,
-	const _Complex _Float128 *c,
-	const _Complex _Float128 *z
-) {
-	*result = *z * *z * *z + *c;
-}</property>
+    <property name="text" translatable="yes">f(c, z) = z*z*z + z + c</property>
   </object>
   <object class="GtkWindow" id="window">
     <property name="can_focus">False</property>

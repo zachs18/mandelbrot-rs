@@ -27,6 +27,8 @@ use num_traits::Zero;
 use watch::local::Watched;
 
 mod generation;
+#[cfg(feature = "custom_fractals")]
+mod custom_fractal;
 
 use crate::generation::{Config, Precision, generate, Fractal};
 
@@ -288,13 +290,7 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
                 ctx.remove_class("unused");
                 state.config.update(|config| {
                     let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).unwrap();
-                    let handle = match compile_in_memory::compile(
-                        "gcc",
-                        &text,
-                        "c",
-                        compile_in_memory::OptimizationLevel::Two,
-                        false,
-                    ) {
+                    let handle = match custom_fractal::compile(&text) {
                         Ok(handle) => Arc::new(handle),
                         Err(_) => {
                             ctx.add_class("bad");

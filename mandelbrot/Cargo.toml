@@ -5,7 +5,7 @@ edition = "2021"
 
 [features]
 default = ["custom_fractals"]
-custom_fractals = ["loader", "compile-in-memory"]
+custom_fractals = ["loader", "compile-in-memory", "nom"]
 
 [dependencies]
 image = "0.24"
@@ -33,6 +33,10 @@ path = "../loader"
 optional = true
 package = "compile-in-memory"
 path = "../compile-in-memory"
+
+[dependencies.nom]
+optional = true
+version = "7"
 
 [build-dependencies]
 gio = "0.15"
