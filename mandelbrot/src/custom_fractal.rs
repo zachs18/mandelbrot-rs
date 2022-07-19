@@ -46,27 +46,27 @@ impl FloatType {
 
 /// Always put a space before something if it could combine
 trait Translate {
-    fn translate(&self, f: &mut String) -> std::fmt::Result;
+    fn translate(&self, float_type: FloatType, f: &mut String) -> std::fmt::Result;
 }
 impl<'src> Translate for Expression<'src> {
-    fn translate(&self, f: &mut String) -> std::fmt::Result {
+    fn translate(&self, float_type: FloatType, f: &mut String) -> std::fmt::Result {
         match self {
             Expression::Literal(literal) => f.write_fmt(format_args!(" {}", literal)),
             Expression::Variable(var) => f.write_fmt(format_args!(" *{}", var)),
             Expression::UnaryOp(op, expr) => {
-                op.translate(f)?;
-                expr.translate(f)
+                op.translate(float_type, f)?;
+                expr.translate(float_type, f)
             },
             Expression::BinOp(lhs, op, rhs) => {
-                lhs.translate(f)?;
-                op.translate(f)?;
-                rhs.translate(f)
+                lhs.translate(float_type, f)?;
+                op.translate(float_type, f)?;
+                rhs.translate(float_type, f)
             },
         }
     }
 }
 impl Translate for Op {
-    fn translate(&self, f: &mut String) -> std::fmt::Result {
+    fn translate(&self, _: FloatType, f: &mut String) -> std::fmt::Result {
         f.write_str(match self {
             Op::Assign => " =",
             Op::Plus => " +",
@@ -77,8 +77,8 @@ impl Translate for Op {
         })
     }
 }
-impl<'src> Translate for (&FunctionDefinition<'src>, FloatType) {
-    fn translate(&self, f: &mut String) -> std::fmt::Result {
+impl<'src> Translate for FunctionDefinition<'src> {
+    fn translate(&self, float_type: FloatType, f: &mut String) -> std::fmt::Result {
         f.write_fmt(format_args!(
 r#"void {func}(
     _Complex {ctype} *result,
@@ -86,10 +86,10 @@ r#"void {func}(
     const _Complex {ctype} *z
 ) {{
     *result = "#,
-            func = self.1.c_func(),
-            ctype = self.1.c_name(),
+            func = float_type.c_func(),
+            ctype = float_type.c_name(),
         ))?;
-        self.0.body.translate(f)?;
+        self.body.translate(float_type, f)?;
         f.write_str(";}")
     }
 }
@@ -115,9 +115,9 @@ pub fn compile(src: &str) -> Result<Library, ()> {
     };
 
     let mut source = String::with_capacity(4096);
-    (&definition, FloatType::F32).translate(&mut source).map_err(debug_and_ignore!())?;
-    (&definition, FloatType::F64).translate(&mut source).map_err(debug_and_ignore!())?;
-    (&definition, FloatType::F128).translate(&mut source).map_err(debug_and_ignore!())?;
+    definition.translate(FloatType::F32, &mut source).map_err(debug_and_ignore!())?;
+    definition.translate(FloatType::F64, &mut source).map_err(debug_and_ignore!())?;
+    definition.translate(FloatType::F128, &mut source).map_err(debug_and_ignore!())?;
 
     compile_in_memory::compile(
         "gcc",
