@@ -52,7 +52,7 @@ impl<'src> Translate for Expression<'src> {
     fn translate(&self, float_type: FloatType, f: &mut String) -> std::fmt::Result {
         match self {
             Expression::Literal(literal) => f.write_fmt(format_args!(" {}", literal)),
-            Expression::Variable(var) => f.write_fmt(format_args!(" *{}", var)),
+            Expression::Variable(var) => f.write_fmt(format_args!(" {}", var)),
             Expression::UnaryOp(op, expr) => {
                 op.translate(float_type, f)?;
                 expr.translate(float_type, f)
@@ -81,11 +81,13 @@ impl<'src> Translate for FunctionDefinition<'src> {
     fn translate(&self, float_type: FloatType, f: &mut String) -> std::fmt::Result {
         f.write_fmt(format_args!(
 r#"void {func}(
-    _Complex {ctype} *result,
-    const _Complex {ctype} *c,
-    const _Complex {ctype} *z
+    _Complex {ctype} *_result,
+    const _Complex {ctype} *_c,
+    const _Complex {ctype} *_z
 ) {{
-    *result = "#,
+    const _Complex {ctype} c = *_c;
+    const _Complex {ctype} z = *_z;
+    *_result = "#,
             func = float_type.c_func(),
             ctype = float_type.c_name(),
         ))?;
