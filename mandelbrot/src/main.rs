@@ -300,7 +300,6 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
                             return false;
                         },
                     };
-                    eprintln!("TODO: make a minilanguage/parser and generate the three functions");
 
                     type Callback<T> = extern "C" fn(*mut Complex<T>, *const Complex<T>, *const Complex<T>);
 

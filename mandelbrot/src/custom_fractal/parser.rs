@@ -1,4 +1,4 @@
-use nom::{IResult, multi::{separated_list0, many0}, sequence::{tuple, delimited, preceded}, Parser, Finish, branch::alt, combinator::{opt, map_res}};
+use nom::{IResult, multi::{separated_list0, many0, separated_list1}, sequence::{tuple, delimited, preceded, terminated}, Parser, Finish, branch::alt, combinator::{opt, map_res}};
 
 use super::{
     lexer::{Token, TokenKind},
@@ -19,6 +19,8 @@ pub(super) enum Expression<'src> {
     BinOp(Box<Expression<'src>>, Op, Box<Expression<'src>>),
     /// Used for .re and .im
     Component(Box<Expression<'src>>, Component),
+    /// Represents function calls and method calls
+    FunctionCall(&'src str, Vec<Expression<'src>>),
 }
 
 #[derive(Debug)]
@@ -28,6 +30,8 @@ pub(super) enum ParseError<'tok, 'src> {
     Op(Op),
     TokenKind(TokenKind),
     InvalidField(&'src str),
+    /// A non-ident was used as a function
+    InvalidFunction,
     ExtraInput(&'tok [Token<'src>]),
     Other(nom::error::Error<&'tok [Token<'src>]>),
 }
@@ -120,9 +124,13 @@ fn function_definition<'tok, 'src>(
 /// Grammar:
 /// expression: add_expression
 /// add_expression: add_expression (add_op multiply_expression)?
-/// multiply_expression: multiply_expression (multiply_op unary_expression)?
-/// unary_expression: (unary_op)* field_expression
-/// field_expression: unit_expression ('.' ident)?
+/// multiply_expression: multiply_expression (multiply_op unary_prefix_expression)?
+/// unary_prefix_expression: (unary_prefix_op)* call_expression
+/// call_or_field_expression: unit_expression (call_or_field_tail)?
+/// call_or_field_tail: call_tail     <-- function call
+///                   | '.' call_tail <-- method call
+///                   | ident         <-- component access
+/// call_tail: '(' (expression (',' expression)? ','?)? ')'
 /// unit_expression: '(' expression ')'
 ///                | variable
 ///                | literal
@@ -153,9 +161,9 @@ fn multiply_expression<'tok, 'src>(
     input: &'tok [Token<'src>],
 ) -> IResult<&'tok [Token<'src>], Expression<'src>, ParseError<'tok, 'src>> {
     let mul_op = alt((op(Op::Times), op(Op::Divide)));
-    let mul_tail = tuple((mul_op, unary_expression));
+    let mul_tail = tuple((mul_op, unary_prefix_expression));
     tuple((
-        unary_expression,
+        unary_prefix_expression,
         many0(mul_tail),
     )).map(|(mut lhs, tail)| {
         for (op, rhs) in tail {
@@ -165,14 +173,14 @@ fn multiply_expression<'tok, 'src>(
     }).parse(input)
 }
 
-fn unary_expression<'tok, 'src>(
+fn unary_prefix_expression<'tok, 'src>(
     input: &'tok [Token<'src>],
 ) -> IResult<&'tok [Token<'src>], Expression<'src>, ParseError<'tok, 'src>> {
-    let unary_op = alt((op(Op::Minus), op(Op::Conjugate)));
-    let unary_tail = field_expression;
+    let unary_prefix_op = alt((op(Op::Minus), op(Op::Conjugate)));
+    let unary_prefix_tail = call_or_field_expression;
     tuple((
-        many0(unary_op),
-        unary_tail,
+        many0(unary_prefix_op),
+        unary_prefix_tail,
     )).map(|(ops, mut tail)| {
         for op in ops {
             tail = Expression::UnaryOp(op, tail.into())
@@ -181,24 +189,79 @@ fn unary_expression<'tok, 'src>(
     }).parse(input)
 }
 
-fn field_expression<'tok, 'src>(
+fn call_or_field_expression<'tok, 'src>(
     input: &'tok [Token<'src>],
 ) -> IResult<&'tok [Token<'src>], Expression<'src>, ParseError<'tok, 'src>> {
+    enum CallOrFieldTail<'src> {
+        CallTail(Vec<Expression<'src>>),
+        MethodTail(&'src str, Vec<Expression<'src>>),
+        Component(Component),
+    }
+
+    fn call_tail<'tok, 'src>(
+        input: &'tok [Token<'src>],
+    ) -> IResult<&'tok [Token<'src>], Vec<Expression<'src>>, ParseError<'tok, 'src>> {
+        delimited(
+            token_kind(TokenKind::LParen),
+            opt(
+                terminated(
+                    separated_list1(token_kind(TokenKind::Comma), expression),
+                    opt(token_kind(TokenKind::Comma)),
+                )
+            ),
+            token_kind(TokenKind::RParen),
+        ).map(
+            Option::unwrap_or_default
+        ).parse(input)
+    }
+
+    fn component<'tok, 'src>(
+        input: &'tok [Token<'src>],
+    ) -> IResult<&'tok [Token<'src>], Component, ParseError<'tok, 'src>> {
+        map_res(
+            preceded(
+                token_kind(TokenKind::Period), ident
+            ),
+            |field| match field {
+                "re" | "real" => Ok(Component::Real),
+                "im" | "imag" => Ok(Component::Imag),
+                field => Err(ParseError::InvalidField(field)),
+            }
+        ).parse(input)
+    }
+
     map_res(
         tuple((
             unit_expression,
-            opt(preceded(
-                token_kind(TokenKind::Period), ident
+            many0(alt((
+                call_tail.map(CallOrFieldTail::CallTail),
+                tuple((
+                    preceded(
+                        token_kind(TokenKind::Period), ident
+                    ),
+                    call_tail,
+                )).map(|(method, args)| CallOrFieldTail::MethodTail(method, args)),
+                component.map(CallOrFieldTail::Component))
             )),
         )),
-        |(expr, field)| {
-            match field {
-                Some("re") | Some("real") => Ok(Expression::Component(expr.into(), Component::Real)),
-                Some("im") | Some("imag") => Ok(Expression::Component(expr.into(), Component::Imag)),
-                None => Ok(expr),
-                Some(field) => Err(ParseError::InvalidField(field))as Result<Expression, _>,
+        |(mut expr, tails)| {
+            for tail in tails {
+                expr = match tail {
+                    CallOrFieldTail::CallTail(args) => {
+                        match expr {
+                            Expression::Variable(func) => Expression::FunctionCall(func, args),
+                            _ => return Err(ParseError::InvalidFunction),
+                        }
+                    },
+                    CallOrFieldTail::MethodTail(method, mut args) => {
+                        args.insert(0, expr);
+                        Expression::FunctionCall(method, args)
+                    },
+                    CallOrFieldTail::Component(component) => Expression::Component(expr.into(), component),
+                };
             }
-        },
+            Ok(expr)
+        }
     ).parse(input)
 }
 
