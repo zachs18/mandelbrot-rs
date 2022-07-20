@@ -21,6 +21,7 @@ use gtk::{
 #[cfg(not(feature = "custom_fractals"))]
 use gtk::traits::ContainerExt;
 use image::RgbImage;
+#[cfg(feature = "custom_fractals")]
 use loader::AssertSendSyncExt;
 use num_complex::Complex;
 use num_traits::Zero;
@@ -144,10 +145,8 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
 
             mandelbrot_radiobutton: RadioButton;
             burning_ship_radiobutton: RadioButton;
-            #[cfg(feature = "custom_fractals")]
             custom_fractal_radiobutton: RadioButton;
 
-            #[cfg(feature = "custom_fractals")]
             custom_fractal_text_view: TextView;
 
             f32_radiobutton: RadioButton;
@@ -163,6 +162,7 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
         {
             control_grid.remove(&custom_fractal_radiobutton);
             control_grid.remove(&custom_fractal_text_view_box);
+            control_grid.set_valign(gtk::Align::Center);
         }
 
         let screen = gtk::gdk::Screen::default().unwrap();
@@ -281,6 +281,7 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
         setup_enum_radiobutton_callback!(
             burning_ship_radiobutton: fractal = Fractal::BurningShip
         );
+        #[cfg(feature = "custom_fractals")]
         let custom_fractal_compile = {
             let state = Rc::clone(&state);
             let buffer = state.custom_fractal_text_view.buffer().unwrap();
@@ -354,10 +355,12 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
                 });
             }
         };
+        #[cfg(feature = "custom_fractals")]
         state.custom_fractal_radiobutton.connect_toggled({
             let custom_fractal_compile = custom_fractal_compile.clone();
             move |_| custom_fractal_compile()
         });
+        #[cfg(feature = "custom_fractals")]
         state.custom_fractal_text_view.buffer().unwrap().connect_changed({
             let custom_fractal_compile = custom_fractal_compile.clone();
             move |_| custom_fractal_compile()
@@ -554,6 +557,10 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
                             break
                         },
                     };
+                    static TODO_ONCE: std::sync::Once = std::sync::Once::new();
+                    TODO_ONCE.call_once(|| {
+                        eprintln!("TODO: multithread image generation");
+                    });
                     progress_text_buffer.set_text("Working...");
                     let img = unblock(move || generate(config)).await;
                     progress_text_buffer.set_text("Done.");
