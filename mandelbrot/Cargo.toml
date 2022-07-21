@@ -45,5 +45,5 @@ version = "7"
 optional = true
 version = "1"
 
-[build-dependencies]
-gio = "0.15"
+#[build-dependencies]
+#gio = "0.15"
