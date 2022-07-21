@@ -2,6 +2,13 @@ use std::{fs::File, os::unix::prelude::FromRawFd, io::Write, ffi::{CString, CStr
 
 use loader::{Library, c_str};
 
+#[cfg(not(any(
+    all(target_os = "linux", target_env = "gnu"),
+    all(target_os = "linux", target_env = "musl"),
+    target_os = "freebsd",
+)))]
+compile_error!("The libc crate only has the memfd_create syscall under linux-gnu, linux-musl, and freebsd.");
+
 unsafe fn make_fd(name: &CStr, flags: u32) -> Result<i32, std::io::Error> {
     let fd = libc::memfd_create(name.as_ptr(), flags);
     if fd >= 0 {

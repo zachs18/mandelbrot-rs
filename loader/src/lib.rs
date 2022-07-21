@@ -4,6 +4,9 @@
 #![cfg_attr(feature = "fn_traits", feature(fn_traits))]
 #![deny(unsafe_op_in_unsafe_fn)]
 
+#[cfg(not(unix))]
+compile_error!("Not supported on non-unix platforms");
+
 pub mod ref_var;
 pub mod ref_func;
 pub mod owned_var;
@@ -26,12 +29,28 @@ macro_rules! c_str {
     };
 }
 
-/// dlerror is thread-safe, but re-uses the buffer between calls on the same thread.
-/// so no other libdl function may be called until the returned reference is dropped.
-unsafe fn get_dlerror<'a>() -> Option<&'a CStr> {
+/// dlerror is thread-safe on Linux and macOs,
+/// but re-uses the buffer between calls on the same thread.
+#[cfg(all(unix, any(target_os = "linux", target_os = "macos")))]
+unsafe fn get_dlerror() -> Option<CString> {
     let error = unsafe { libc::dlerror() };
     if !error.is_null() {
-        Some(unsafe { CStr::from_ptr(error) })
+        Some(unsafe { CStr::from_ptr(error) }.to_owned())
+    } else {
+        None
+    }
+}
+
+/// dlerror is not required by POSIX-1.2017 to be thread-safe, so 
+/// employ a static mutex to ensure this library only calls it from one thread at a time.
+/// NOTE: Other code making dlerror calls (not from this crate) will race with this.
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
+unsafe fn get_dlerror() -> Option<CString> {
+    static DLERROR_LOCK: Mutex<()> = Mutex::new(());
+    let guard = DLERROR_LOCK.lock().expect("failed to lock dlerror mutex");
+    let error = unsafe { libc::dlerror() };
+    if !error.is_null() {
+        Some(unsafe { CStr::from_ptr(error) }.to_owned())
     } else {
         None
     }
@@ -70,7 +89,7 @@ impl Library {
         if let Some(handle) = NonNull::new(handle) {
             Ok(Library { handle })
         } else {
-            Err(unsafe { get_dlerror() }.unwrap().to_owned())
+            Err(unsafe { get_dlerror() }.unwrap())
         }
     }
 
@@ -83,7 +102,7 @@ impl Library {
         if let Some(symbol) = NonNull::new(symbol) {
             Ok(LibraryVar { ptr: symbol.cast(), _library: self  })
         } else {
-            Err(unsafe { get_dlerror() }.unwrap().to_owned())
+            Err(unsafe { get_dlerror() }.unwrap())
         }
     }
 
@@ -99,7 +118,7 @@ impl Library {
             let ptr: F = unsafe { std::mem::transmute_copy(&symbol) };
             Ok(LibraryFunc { ptr, _library: self })
         } else {
-            Err(unsafe { get_dlerror() }.unwrap().to_owned())
+            Err(unsafe { get_dlerror() }.unwrap())
         }
     }
 
