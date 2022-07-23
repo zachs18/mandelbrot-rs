@@ -12,6 +12,7 @@ num-complex = "0.4"
 gtk = "0.15"
 blocking = "1.2"
 num-traits = "0.2.15"
+nom_locate = "4.0.0"
 
 [dependencies.image]
 version = "0.24"

@@ -2,36 +2,34 @@ use nom::{IResult, multi::{separated_list0, many0, separated_list1}, sequence::{
 
 use super::{
     lexer::{Token, TokenKind},
-    Op, Component,
+    Op, Component, Span,
 };
 
 pub struct FunctionDefinition<'src> {
-    pub(super) name: &'src str,
-    pub(super) args: Vec<&'src str>,
+    pub(super) name: Span<'src>,
+    pub(super) args: Vec<Span<'src>>,
     pub(super) body: Expression<'src>,
 }
 
 #[derive(Debug, Clone)]
 pub(super) enum Expression<'src> {
-    Literal(&'src str),
-    Variable(&'src str),
+    Literal(Span<'src>),
+    Variable(Span<'src>),
     UnaryOp(Op, Box<Expression<'src>>),
     BinOp(Box<Expression<'src>>, Op, Box<Expression<'src>>),
     /// Used for .re and .im
     Component(Box<Expression<'src>>, Component),
     /// Represents function calls and method calls
-    FunctionCall(&'src str, Vec<Expression<'src>>),
+    FunctionCall(Span<'src>, Vec<Expression<'src>>),
 }
 
 #[derive(Debug)]
 pub(super) enum ParseError<'tok, 'src> {
-    Ident,
-    Literal,
-    Op(Op),
-    TokenKind(TokenKind),
-    InvalidField(&'src str),
+    /// A specific token kind was expected.
+    TokenKind(TokenKind, Option<Token<'src>>),
+    InvalidField(Span<'src>),
     /// A non-ident was used as a function
-    InvalidFunction,
+    InvalidFunction(Expression<'src>),
     ExtraInput(&'tok [Token<'src>]),
     Other(nom::error::Error<&'tok [Token<'src>]>),
 }
@@ -54,46 +52,35 @@ impl<'tok, 'src> nom::error::FromExternalError<&'tok [Token<'src>], ParseError<'
 
 fn ident<'tok, 'src>(
     input: &'tok [Token<'src>],
-) -> IResult<&'tok [Token<'src>], &'src str, ParseError<'tok, 'src>> {
-    match input.split_first() {
-        Some(((TokenKind::Ident, ident), rest)) => Ok((rest, ident)),
-        _ => Err(nom::Err::Error(
-            ParseError::Ident,
-        )),
-    }
+) -> IResult<&'tok [Token<'src>], Span<'src>, ParseError<'tok, 'src>> {
+    token_kind(TokenKind::Ident).map(|tok| tok.1).parse(input)
 }
 
 fn literal<'tok, 'src>(
     input: &'tok [Token<'src>],
-) -> IResult<&'tok [Token<'src>], &'src str, ParseError<'tok, 'src>> {
-    match input.split_first() {
-        Some(((TokenKind::Literal, literal), rest)) => Ok((rest, literal)),
-        _ => Err(nom::Err::Error(
-            ParseError::Literal,
-        )),
-    }
+) -> IResult<&'tok [Token<'src>], Span<'src>, ParseError<'tok, 'src>> {
+    token_kind(TokenKind::Literal).map(|tok| tok.1).parse(input)
 }
 
 fn op(
     op: Op,
 ) -> impl for<'tok, 'src> FnMut(&'tok [Token<'src>]) -> IResult<&'tok [Token<'src>], Op, ParseError<'tok, 'src>>
 {
-    move |input| match input.split_first() {
-        Some(((TokenKind::Op(found_op), _), rest)) if *found_op == op => Ok((rest, op)),
-        _ => Err(nom::Err::Error(
-            ParseError::Op(op)
-        )),
-    }
+    move |input| token_kind(TokenKind::Op(op)).map(|_| op).parse(input)
 }
 
+#[inline]
 fn token_kind(
     kind: TokenKind,
 ) -> impl for<'tok, 'src> FnMut(&'tok [Token<'src>]) -> IResult<&'tok [Token<'src>], Token<'src>, ParseError<'tok, 'src>>
 {
     move |input| match input.split_first() {
         Some((token, rest)) if token.0 == kind => Ok((rest, *token)),
-        _ => Err(nom::Err::Error(
-            ParseError::TokenKind(kind)
+        Some((token, _)) => Err(nom::Err::Error(
+            ParseError::TokenKind(kind, Some(*token))
+        )),
+        None => Err(nom::Err::Error(
+            ParseError::TokenKind(kind, None)
         )),
     }
 }
@@ -194,7 +181,7 @@ fn call_or_field_expression<'tok, 'src>(
 ) -> IResult<&'tok [Token<'src>], Expression<'src>, ParseError<'tok, 'src>> {
     enum CallOrFieldTail<'src> {
         CallTail(Vec<Expression<'src>>),
-        MethodTail(&'src str, Vec<Expression<'src>>),
+        MethodTail(Span<'src>, Vec<Expression<'src>>),
         Component(Component),
     }
 
@@ -222,10 +209,10 @@ fn call_or_field_expression<'tok, 'src>(
             preceded(
                 token_kind(TokenKind::Period), ident
             ),
-            |field| match field {
+            |field| match *field.fragment() {
                 "re" | "real" => Ok(Component::Real),
                 "im" | "imag" => Ok(Component::Imag),
-                field => Err(ParseError::InvalidField(field)),
+                _ => Err(ParseError::InvalidField(field)),
             }
         ).parse(input)
     }
@@ -250,7 +237,7 @@ fn call_or_field_expression<'tok, 'src>(
                     CallOrFieldTail::CallTail(args) => {
                         match expr {
                             Expression::Variable(func) => Expression::FunctionCall(func, args),
-                            _ => return Err(ParseError::InvalidFunction),
+                            _ => return Err(ParseError::InvalidFunction(expr)),
                         }
                     },
                     CallOrFieldTail::MethodTail(method, mut args) => {

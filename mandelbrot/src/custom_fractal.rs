@@ -2,8 +2,11 @@ use std::{fmt::Write, rc::Rc};
 
 use either::Either;
 use loader::Library;
+use nom_locate::LocatedSpan;
 
 use self::{type_checker::{SymbolTable, Symbol, TypeKind, Type, TypedExpression, TypedExpressionKind, TypedFunctionDefinition}};
+
+pub(self) type Span<'src> = LocatedSpan<&'src str>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(self) enum Op {
@@ -155,14 +158,10 @@ macro_rules! debug_and_ignore {
 }
 
 pub fn compile(src: &str) -> Result<Library, ()> {
-    let tokens = lexer::lex(src).map_err(debug_and_ignore!())?;
-    let definition = parser::parse_tokens(&tokens).map_err(debug_and_ignore!())?;
+    let span = LocatedSpan::new(src);
 
-    match &*definition.args {
-        &["c", "z"] => {},
-        &["z", "c"] => {},
-        _ => return Err(()),
-    };
+    let tokens = lexer::lex(span).map_err(debug_and_ignore!())?;
+    let definition = parser::parse_tokens(&tokens).map_err(debug_and_ignore!())?;
 
     let real = Type::from(&TypeKind::Real);
     let complex = Type::from(&TypeKind::Complex);
@@ -174,6 +173,7 @@ pub fn compile(src: &str) -> Result<Library, ()> {
             name,
             Symbol {
                 r#type,
+                definition: None,
                 c_name: Either::Right(Rc::new(Symbol::c_name_explicit(single, double, quad)))
             },
         )
@@ -187,6 +187,15 @@ pub fn compile(src: &str) -> Result<Library, ()> {
 
     let definition = type_checker::TypeCheck::type_check(&definition, &global_symbols).map_err(debug_and_ignore!())?;
 
+    if definition.args.len() != 2 {
+        return Err(());
+    }
+
+    match [&definition.args[0].c_name, &definition.args[1].c_name] {
+        [Either::Left("c"), Either::Left("z")] => {},
+        [Either::Left("z"), Either::Left("c")] => {},
+        _ => return Err(()),
+    };
 
     static TODO_ONCE: std::sync::Once = std::sync::Once::new();
     TODO_ONCE.call_once(|| {

@@ -2,7 +2,7 @@ use std::{rc::Rc, ops::Deref, collections::{HashMap}, borrow::Cow};
 
 use either::Either;
 
-use super::{FloatType, Op, Component, parser::{Expression, FunctionDefinition}};
+use super::{FloatType, Op, Component, parser::{Expression, FunctionDefinition}, Span};
 
 #[derive(Debug, Clone)]
 pub struct TypedFunctionDefinition<'src> {
@@ -19,8 +19,8 @@ pub(super) struct TypedExpression<'src> {
 
 #[derive(Debug, Clone)]
 pub(super) enum TypedExpressionKind<'src> {
-    Literal(&'src str),
-    Variable(&'src str),
+    Literal(Span<'src>),
+    Variable(Span<'src>),
     UnaryOp(Op, Box<TypedExpression<'src>>),
     BinOp(Box<TypedExpression<'src>>, Op, Box<TypedExpression<'src>>),
     /// Used for .re and .im
@@ -133,6 +133,7 @@ impl PartialEq for TypeKind {
 #[derive(Clone)]
 pub(super) struct Symbol<'src> {
     pub(super) r#type: Type,
+    pub(super) definition: Option<Span<'src>>,
     pub(super) c_name: Either<&'src str, Rc<dyn Fn(FloatType) -> Cow<'src, str> + 'src>>,
 }
 
@@ -197,13 +198,13 @@ impl<'parent, 'src> SymbolTable<'parent, 'src> {
 
 #[derive(Debug)]
 pub(super) enum TypeCheckError<'src> {
-    UndeclaredFunction(&'src str),
-    UndeclaredVariable(&'src str),
+    UndeclaredFunction(Span<'src>),
+    UndeclaredVariable(Span<'src>),
     BinOp(TypedExpression<'src>, Op, TypedExpression<'src>),
     Component(TypedExpression<'src>, Component),
     FunctionCallWrongArgs(Symbol<'src>, Vec<TypedExpression<'src>>),
-    NotAFunction(&'src str),
-    Redefinition(&'src str),
+    NotAFunction(Span<'src>),
+    Redefinition(Span<'src>, Option<Span<'src>>),
 }
 
 pub(super) trait TypeCheck<'src> {
@@ -219,13 +220,14 @@ impl<'src> TypeCheck<'src> for FunctionDefinition<'src> {
 
         let mut symbols = SymbolTable { parent: Some(symbols), symbols: HashMap::new() };
 
-        let args = args.iter().map(|arg| {
+        let args = args.iter().map(|&arg| {
             let symbol = Symbol {
                 r#type: Type::from(&TypeKind::Complex),
-                c_name: Either::Left(arg),
+                definition: Some(arg),
+                c_name: Either::Left(&arg),
             };
-            if symbols.insert(arg, symbol.clone()).is_some() {
-                Err(TypeCheckError::Redefinition(arg))
+            if let Some(prev_sym) = symbols.insert(&arg, symbol.clone()) {
+                Err(TypeCheckError::Redefinition(arg, prev_sym.definition))
             } else {
                 Ok(symbol)
             }
@@ -234,15 +236,16 @@ impl<'src> TypeCheck<'src> for FunctionDefinition<'src> {
         let func_type = TypeKind::Function { args: vec![Type::from(&TypeKind::Complex); args.len()], returns: Type::from(&TypeKind::Complex) };
         let func_type = Type::from(func_type);
 
-        let func_name = Symbol::c_name_append_size(name);
+        let func_name = Symbol::c_name_append_size(name.fragment());
 
         let func_sym = Symbol {
             r#type: func_type,
+            definition: Some(self.name),
             c_name: Either::Right(Rc::new(func_name)),
         };
 
-        if symbols.insert(name, func_sym.clone()).is_some() {
-            return Err(TypeCheckError::Redefinition(name));
+        if let Some(prev_sym) = symbols.insert(name.fragment(), func_sym.clone()) {
+            return Err(TypeCheckError::Redefinition(name, prev_sym.definition));
         }
         
         let body = body.type_check(&symbols)?;
@@ -259,7 +262,7 @@ impl<'src> TypeCheck<'src> for Expression<'src> {
     type Output = TypedExpression<'src>;
 
     fn type_check(&self, symbols: &SymbolTable<'_, 'src>) -> Result<Self::Output, TypeCheckError<'src>> {
-        match self {
+        match *self {
             Expression::Literal(literal) => Ok(TypedExpression {
                 r#type: if literal.ends_with("i") {
                     Type::from(&TypeKind::Complex)
@@ -269,7 +272,7 @@ impl<'src> TypeCheck<'src> for Expression<'src> {
                 kind: TypedExpressionKind::Literal(literal),
             }),
             Expression::Variable(variable) => Ok(TypedExpression {
-                r#type: if let Some(symbol) = symbols.get(variable) {
+                r#type: if let Some(symbol) = symbols.get(&variable) {
                     symbol.r#type.clone()
                 } else {
                     // Type::from(&TypeKind::Error)
@@ -277,14 +280,14 @@ impl<'src> TypeCheck<'src> for Expression<'src> {
                 },
                 kind: TypedExpressionKind::Variable(variable),
             }),
-            &Expression::UnaryOp(op, ref expr) => {
+            Expression::UnaryOp(op, ref expr) => {
                 let expr = expr.type_check(symbols)?;
                 Ok(TypedExpression {
                     r#type: expr.r#type.clone(),
                     kind: TypedExpressionKind::UnaryOp(op, expr.into()),
                 })
             },
-            &Expression::BinOp(ref lhs, op, ref rhs) => {
+            Expression::BinOp(ref lhs, op, ref rhs) => {
                 let lhs = lhs.type_check(symbols)?;
                 let rhs = rhs.type_check(symbols)?;
                 let r#type = match (&*lhs.r#type, op, &*rhs.r#type) {
@@ -302,7 +305,7 @@ impl<'src> TypeCheck<'src> for Expression<'src> {
                     kind: TypedExpressionKind::BinOp(lhs.into(), op, rhs.into()),
                 })
             },
-            &Expression::Component(ref expr, component) => {
+            Expression::Component(ref expr, component) => {
                 let expr = expr.type_check(symbols)?;
                 let r#type = match &*expr.r#type {
                     TypeKind::Real | TypeKind::Complex => Type::from(&TypeKind::Real),
@@ -314,8 +317,8 @@ impl<'src> TypeCheck<'src> for Expression<'src> {
                     kind: TypedExpressionKind::Component(expr.into(), component),
                 })
             },
-            Expression::FunctionCall(func, args) => {
-                let func_sym = match symbols.get(func) {
+            Expression::FunctionCall(func, ref args) => {
+                let func_sym = match symbols.get(&func) {
                     Some(func_sym) => func_sym,
                     None => return Err(TypeCheckError::UndeclaredFunction(func)),
                 };
