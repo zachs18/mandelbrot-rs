@@ -207,6 +207,32 @@ pub(super) enum TypeCheckError<'src> {
     Redefinition(Span<'src>, Option<Span<'src>>),
 }
 
+impl<'src> TypeCheckError<'src> {
+    pub(super) fn explanation(&self) -> &'static str {
+        match self {
+            TypeCheckError::UndeclaredFunction(_) => "Undeclared function",
+            TypeCheckError::UndeclaredVariable(_) => "Undeclared variable",
+            TypeCheckError::BinOp(_, _, _) => "Invalid types for binary operator",
+            TypeCheckError::Component(_, _) => "Invalid type for component",
+            TypeCheckError::FunctionCallWrongArgs(_, _) => "Incorrect arguments for function",
+            TypeCheckError::NotAFunction(_) => "Attempt to call non-function",
+            TypeCheckError::Redefinition(_, _) => "Redefinition of symbol",
+        }
+    }
+
+    pub(super) fn span(&self) -> Option<Span<'src>> {
+        match *self {
+            TypeCheckError::UndeclaredFunction(span)
+            | TypeCheckError::UndeclaredVariable(span)
+            | TypeCheckError::NotAFunction(span)
+            | TypeCheckError::Redefinition(span, _) => Some(span),
+            TypeCheckError::BinOp(_, _, _) => None, // TODO
+            TypeCheckError::Component(_, _) => None, // TODO
+            TypeCheckError::FunctionCallWrongArgs(_, _) => None, // TODO
+        }
+    }
+}
+
 pub(super) trait TypeCheck<'src> {
     type Output;
     fn type_check(&self, symbols: &SymbolTable<'_, 'src>) -> Result<Self::Output, TypeCheckError<'src>>;
@@ -247,7 +273,18 @@ impl<'src> TypeCheck<'src> for FunctionDefinition<'src> {
         if let Some(prev_sym) = symbols.insert(name.fragment(), func_sym.clone()) {
             return Err(TypeCheckError::Redefinition(name, prev_sym.definition));
         }
-        
+
+        {
+            static TODO_ONCE: std::sync::Once = std::sync::Once::new();
+            TODO_ONCE.call_once(|| {
+                eprintln!("TODO: functions, but disallow recursion");
+                eprintln!("TODO: don't remove function from symbols");
+            });
+            // To prevent linking errors because we currently only allow
+            // one function definition, and we change it's symbol.
+            symbols.symbols.remove(name.fragment()); 
+        }
+
         let body = body.type_check(&symbols)?;
 
         Ok(TypedFunctionDefinition {

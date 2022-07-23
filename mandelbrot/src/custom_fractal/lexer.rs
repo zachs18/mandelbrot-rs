@@ -95,6 +95,13 @@ pub(super) enum LexError<'src> {
 }
 
 impl<'src> LexError<'src> {
+    pub(super) fn explanation(&self) -> &'static str {
+        match self {
+            LexError::ExtraInput(_) => "Extra input",
+            LexError::Other(_) => "Lexer error",
+        }
+    }
+    
     pub fn span(&self) -> Option<Span<'src>> {
         match *self {
             LexError::ExtraInput(span) => Some(span),

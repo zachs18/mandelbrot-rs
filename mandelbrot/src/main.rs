@@ -14,9 +14,9 @@ use gtk::{
         ApplicationExt, ApplicationExtManual, BuilderExtManual, CssProviderExt,
         GdkContextExt, WidgetExtManual,
     },
-    traits::{EntryExt, GtkApplicationExt, StyleContextExt, WidgetExt, ButtonExt, ToggleButtonExt, TextViewExt, TextBufferExt},
+    traits::{EntryExt, GtkApplicationExt, StyleContextExt, WidgetExt, ButtonExt, ToggleButtonExt, TextViewExt, TextBufferExt, TextTagTableExt},
     Application, Builder, CssProvider, DrawingArea, EditableSignals, Entry, Inhibit, StyleContext,
-    Window, Button, RadioButton, TextView, Grid,
+    Window, Button, RadioButton, TextView, Grid, TextTag, pango::Underline,
 };
 #[cfg(not(feature = "custom_fractals"))]
 use gtk::traits::ContainerExt;
@@ -83,6 +83,8 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
 
             #[cfg(feature = "custom_fractals")]
             custom_fractal_text_view: TextView,
+            #[cfg(feature = "custom_fractals")]
+            custom_fractal_error_view: TextView,
 
             f32_radiobutton: RadioButton,
             f64_radiobutton: RadioButton,
@@ -148,6 +150,7 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
             custom_fractal_radiobutton: RadioButton;
 
             custom_fractal_text_view: TextView;
+            custom_fractal_error_view: TextView;
 
             f32_radiobutton: RadioButton;
             f64_radiobutton: RadioButton;
@@ -193,6 +196,8 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
 
             #[cfg(feature = "custom_fractals")]
             custom_fractal_text_view,
+            #[cfg(feature = "custom_fractals")]
+            custom_fractal_error_view,
 
             f32_radiobutton,
             f64_radiobutton,
@@ -285,19 +290,38 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
         let custom_fractal_compile = {
             let state = Rc::clone(&state);
             let buffer = state.custom_fractal_text_view.buffer().unwrap();
+            let error_buffer = state.custom_fractal_error_view.buffer().unwrap();
+            let error_tag = TextTag::builder()
+                .underline(Underline::Error)
+                .build();
+            buffer.tag_table().unwrap().add(&error_tag);
             move || {
                 let ctx = state.custom_fractal_text_view.style_context();
+                let ectx = state.custom_fractal_error_view.style_context();
                 if !state.custom_fractal_radiobutton.is_active() {
+                    error_buffer.set_text("Okay");
+                    ectx.add_class("unused");
                     ctx.add_class("unused");
                     return;
                 }
+                ectx.remove_class("unused");
                 ctx.remove_class("unused");
                 state.config.update(|config| {
                     let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).unwrap();
+                    buffer.remove_tag(&error_tag, &buffer.start_iter(), &buffer.end_iter());
                     let handle = match custom_fractal::compile(&text) {
                         Ok(handle) => Arc::new(handle),
-                        Err(_) => {
+                        Err((explanation, span)) => {
+                            error_buffer.set_text(explanation);
                             ctx.add_class("bad");
+                            if let Some(span) = span {
+                                let start = span.location_offset();
+                                let mut start_iter = buffer.start_iter();
+                                start_iter.forward_chars(start.try_into().unwrap()); // TODO: bytes vs chars
+                                let mut end_iter = start_iter.clone();
+                                end_iter.forward_chars(span.len().try_into().unwrap()); // TODO: bytes vs chars
+                                buffer.apply_tag(&error_tag, &start_iter, &end_iter);
+                            }
                             return false;
                         },
                     };
@@ -311,6 +335,7 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
                     )))() {
                         Ok(funcs) => funcs,
                         Err(_) => {
+                            error_buffer.set_text("Missing symbols");
                             ctx.add_class("bad");
                             return false;
                         },
@@ -350,6 +375,7 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
                         double: Arc::new(double),
                         quad: Arc::new(quad),
                     };
+                    error_buffer.set_text("Okay");
                     ctx.remove_class("bad");
                     true
                 });

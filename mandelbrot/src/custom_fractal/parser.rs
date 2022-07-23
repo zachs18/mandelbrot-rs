@@ -34,6 +34,43 @@ pub(super) enum ParseError<'tok, 'src> {
     Other(nom::error::Error<&'tok [Token<'src>]>),
 }
 
+impl<'tok, 'src> ParseError<'tok, 'src> {
+    pub(super) fn explanation(&self) -> &'static str {
+        match self {
+            ParseError::TokenKind(tok, _) => match tok {
+                TokenKind::Op(op) => match op {
+                    Op::Assign => "Expected '='",
+                    Op::Plus => "Expected '+'",
+                    Op::Minus => "Expected '-'",
+                    Op::Times => "Expected '*'",
+                    Op::Divide => "Expected '/'",
+                    Op::Conjugate => "Expected '~'",
+                },
+                TokenKind::LParen => "Expected '('",
+                TokenKind::RParen => "Expected ')'",
+                TokenKind::Comma => "Expected ','",
+                TokenKind::Period => "Expected '.'",
+                TokenKind::Ident => "Expected identifier",
+                TokenKind::Literal => "Expected number",
+            },
+            ParseError::InvalidField(_) => "Invalid field",
+            ParseError::InvalidFunction(_) => "Invalid function",
+            ParseError::ExtraInput(_) => "Extra input",
+            ParseError::Other(_) => "Parser error",
+        }
+    }
+
+    pub(super) fn span(&self) -> Option<Span<'src>> {
+        match *self {
+            ParseError::TokenKind(_, token) => token.map(|token| token.1),
+            ParseError::InvalidField(ident) => Some(ident),
+            ParseError::InvalidFunction(_) => None, // TODO
+            ParseError::ExtraInput(input) => input.first().map(|token| token.1),
+            ParseError::Other(ref err) => err.input.first().map(|token| token.1),
+        }
+    }
+}
+
 impl<'tok, 'src> nom::error::ParseError<&'tok [Token<'src>]> for ParseError<'tok, 'src> {
     fn from_error_kind(input: &'tok [Token<'src>], kind: nom::error::ErrorKind) -> Self {
         ParseError::Other(nom::error::Error::from_error_kind(input, kind))

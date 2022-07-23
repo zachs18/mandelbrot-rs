@@ -1,10 +1,10 @@
 .bad {
-    background-image: image(red);
-    background-color: red;
+    background-image: image(#FF8080);
+    background-color: #FF8080;
 }
 .bad text {
-    background-image: image(red);
-    background-color: red;
+    background-image: image(#FF8080);
+    background-color: #FF8080;
 }
 .unused {
     background-image: image(grey);

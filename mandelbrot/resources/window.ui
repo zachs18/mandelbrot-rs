@@ -8,6 +8,11 @@
   <object class="GtkTextBuffer" id="textbuffer1">
     <property name="text" translatable="yes">f(c, z) = z*z*z + z + c</property>
   </object>
+  <object class="GtkTextTagTable" id="texttagtable1"/>
+  <object class="GtkTextBuffer" id="textbuffer2">
+    <property name="tag_table">texttagtable1</property>
+    <property name="text" translatable="yes">Okay</property>
+  </object>
   <object class="GtkWindow" id="window">
     <property name="can_focus">False</property>
     <property name="default_width">760</property>
@@ -236,7 +241,7 @@
               </object>
               <packing>
                 <property name="left_attach">1</property>
-                <property name="top_attach">12</property>
+                <property name="top_attach">13</property>
               </packing>
             </child>
             <child>
@@ -247,7 +252,7 @@
               </object>
               <packing>
                 <property name="left_attach">0</property>
-                <property name="top_attach">12</property>
+                <property name="top_attach">13</property>
               </packing>
             </child>
             <child>
@@ -300,6 +305,22 @@
               <packing>
                 <property name="left_attach">0</property>
                 <property name="top_attach">11</property>
+                <property name="width">2</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkTextView" id="custom_fractal_error_view">
+                <property name="visible">True</property>
+                <property name="can_focus">True</property>
+                <property name="editable">False</property>
+                <property name="buffer">textbuffer2</property>
+                <style>
+                  <class name="unused"/>
+                </style>
+              </object>
+              <packing>
+                <property name="left_attach">0</property>
+                <property name="top_attach">12</property>
                 <property name="width">2</property>
               </packing>
             </child>

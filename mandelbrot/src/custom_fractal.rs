@@ -147,21 +147,19 @@ r#"void {func}(
     }
 }
 
-#[track_caller]
-fn debug_and_ignore_impl<E: std::fmt::Debug>(e: E) -> () {
-    println!("{}: {e:?}",  std::panic::Location::caller());
-}
-macro_rules! debug_and_ignore {
-    () => {
-        |e| debug_and_ignore_impl(e)
-    };
-}
 
-pub fn compile(src: &str) -> Result<Library, ()> {
+pub fn compile(src: &str) -> Result<Library, (&'static str, Option<Span>)> {
     let span = LocatedSpan::new(src);
 
-    let tokens = lexer::lex(span).map_err(debug_and_ignore!())?;
-    let definition = parser::parse_tokens(&tokens).map_err(debug_and_ignore!())?;
+    let tokens = match lexer::lex(span) {
+        Ok(tokens) => tokens,
+        Err(err) => return Err((err.explanation(), err.span())),
+    };
+
+    let definition = match parser::parse_tokens(&tokens) {
+        Ok(definition) => definition,
+        Err(err) => return Err((err.explanation(), err.span())),
+    };
 
     let real = Type::from(&TypeKind::Real);
     let complex = Type::from(&TypeKind::Complex);
@@ -185,16 +183,19 @@ pub fn compile(src: &str) -> Result<Library, ()> {
         make_builtin("ln", rfnr.clone(), "logf", "log", "logq"),
     ].into() };
 
-    let definition = type_checker::TypeCheck::type_check(&definition, &global_symbols).map_err(debug_and_ignore!())?;
+    let definition = match type_checker::TypeCheck::type_check(&definition, &global_symbols) {
+        Ok(definition) => definition,
+        Err(err) => return Err((err.explanation(), err.span())),
+    };
 
     if definition.args.len() != 2 {
-        return Err(());
+        return Err(("Entry point does not have two argments", None));
     }
 
     match [&definition.args[0].c_name, &definition.args[1].c_name] {
         [Either::Left("c"), Either::Left("z")] => {},
         [Either::Left("z"), Either::Left("c")] => {},
-        _ => return Err(()),
+        _ => return Err(("Entry point does not have arguments 'z' and 'c'", None)),
     };
 
     static TODO_ONCE: std::sync::Once = std::sync::Once::new();
@@ -210,9 +211,9 @@ static inline _Float128 _cabsq(_Complex _Float128 x) {
     return hypotq(__real__ x, __imag__ x);
 }"
     );
-    definition.translate(FloatType::F32, &mut source).map_err(debug_and_ignore!())?;
-    definition.translate(FloatType::F64, &mut source).map_err(debug_and_ignore!())?;
-    definition.translate(FloatType::F128, &mut source).map_err(debug_and_ignore!())?;
+    definition.translate(FloatType::F32, &mut source).map_err(|_| ("Failed to translate for single-precision", None))?;
+    definition.translate(FloatType::F64, &mut source).map_err(|_| ("Failed to translate for double-precision", None))?;
+    definition.translate(FloatType::F128, &mut source).map_err(|_| ("Failed to translate for quad-precision", None))?;
 
     compile_in_memory::compile(
         "gcc",
@@ -220,5 +221,8 @@ static inline _Float128 _cabsq(_Complex _Float128 x) {
         "c",
         compile_in_memory::OptimizationLevel::Two,
         false,
-    ).map_err(debug_and_ignore!())
+    ).map_err(|err| {
+        dbg!(err);
+        ("Failed to compile", None)
+    })
 }
