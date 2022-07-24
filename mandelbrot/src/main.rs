@@ -165,6 +165,7 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
         {
             control_grid.remove(&custom_fractal_radiobutton);
             control_grid.remove(&custom_fractal_text_view_box);
+            control_grid.remove(&custom_fractal_error_view);
             control_grid.set_valign(gtk::Align::Center);
         }
 
