@@ -21,8 +21,8 @@ default-features = false
 # Alignment bugfix not yet on crates.io
 [dependencies.f128]
 # version = "0.2.10"
-git = "https://github.com/jkarns275/f128"
-rev = "2065957660a7c6cb5148da550ef1b532ab8227da"
+git = "https://github.com/zachs18/f128"
+rev = "eca88c0a28b4d0b729c490d9fef66ae406a07eb2"
 
 [dependencies.watch]
 package = "watch"

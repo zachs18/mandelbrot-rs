@@ -189,7 +189,7 @@ checksum = "77f3309417938f28bf8228fcff79a4a37103981e3e186d2ccd19c74b38f4eb71"
 [[package]]
 name = "f128"
 version = "0.2.9"
-source = "git+https://github.com/jkarns275/f128?rev=2065957660a7c6cb5148da550ef1b532ab8227da#2065957660a7c6cb5148da550ef1b532ab8227da"
+source = "git+https://github.com/zachs18/f128?rev=eca88c0a28b4d0b729c490d9fef66ae406a07eb2#eca88c0a28b4d0b729c490d9fef66ae406a07eb2"
 dependencies = [
  "f128_input",
  "f128_internal",
@@ -200,7 +200,7 @@ dependencies = [
 [[package]]
 name = "f128_input"
 version = "0.2.1"
-source = "git+https://github.com/jkarns275/f128?rev=2065957660a7c6cb5148da550ef1b532ab8227da#2065957660a7c6cb5148da550ef1b532ab8227da"
+source = "git+https://github.com/zachs18/f128?rev=eca88c0a28b4d0b729c490d9fef66ae406a07eb2#eca88c0a28b4d0b729c490d9fef66ae406a07eb2"
 dependencies = [
  "f128_internal",
 ]
@@ -208,7 +208,7 @@ dependencies = [
 [[package]]
 name = "f128_internal"
 version = "0.2.2"
-source = "git+https://github.com/jkarns275/f128?rev=2065957660a7c6cb5148da550ef1b532ab8227da#2065957660a7c6cb5148da550ef1b532ab8227da"
+source = "git+https://github.com/zachs18/f128?rev=eca88c0a28b4d0b729c490d9fef66ae406a07eb2#eca88c0a28b4d0b729c490d9fef66ae406a07eb2"
 dependencies = [
  "cc",
  "libc",
