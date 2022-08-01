@@ -4,8 +4,9 @@ version = "0.2.0"
 edition = "2021"
 
 [features]
-default = ["custom_fractals"]
+default = ["custom_fractals", "multithread_generation"]
 custom_fractals = ["loader", "compile-in-memory", "nom", "either"]
+multithread_generation = ["num_cpus"]
 
 [dependencies]
 num-complex = "0.4"
@@ -43,6 +44,10 @@ optional = true
 version = "7"
 
 [dependencies.either]
+optional = true
+version = "1"
+
+[dependencies.num_cpus]
 optional = true
 version = "1"
 

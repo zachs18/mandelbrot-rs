@@ -584,10 +584,6 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
                             break
                         },
                     };
-                    static TODO_ONCE: std::sync::Once = std::sync::Once::new();
-                    TODO_ONCE.call_once(|| {
-                        eprintln!("TODO: multithread image generation");
-                    });
                     progress_text_buffer.set_text("Working...");
                     let img = unblock(move || generate(config)).await;
                     progress_text_buffer.set_text("Done.");
