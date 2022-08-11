@@ -4,6 +4,7 @@ members = [
     "watch",
     "loader",
     "compile-in-memory",
+    "gtk-gl",
 ]
 
 [profile.dev]

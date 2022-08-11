@@ -61,6 +61,9 @@ pub struct Library {
     handle: NonNull<libc::c_void>,
 }
 
+unsafe impl Send for Library {}
+unsafe impl Sync for Library {}
+
 impl Drop for Library {
     fn drop(&mut self) {
         let _result = unsafe {
