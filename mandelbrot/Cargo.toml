@@ -4,9 +4,10 @@ version = "0.2.0"
 edition = "2021"
 
 [features]
-default = ["custom_fractals", "multithread_generation"]
+default = ["custom_fractals", "multithread_generation", "opengl"]
 custom_fractals = ["loader", "compile-in-memory", "nom", "either"]
 multithread_generation = ["num_cpus"]
+opengl = ["gl"]
 
 [dependencies]
 num-complex = "0.4"
@@ -50,6 +51,10 @@ version = "1"
 [dependencies.num_cpus]
 optional = true
 version = "1"
+
+[dependencies.gl]
+optional = true
+version = "0.14.0"
 
 #[build-dependencies]
 #gio = "0.15"
