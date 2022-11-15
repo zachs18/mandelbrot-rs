@@ -5,6 +5,7 @@ use std::{
 };
 
 use blocking::unblock;
+#[cfg(feature = "f128")]
 use f128::f128;
 use gtk::{
     gdk::{EventMask, EventType},
@@ -114,6 +115,7 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
                 match config.precision {
                     Precision::Single => self.f32_radiobutton.set_active(true),
                     Precision::Double => self.f64_radiobutton.set_active(true),
+                    #[cfg(feature = "f128")]
                     Precision::Quad => self.f128_radiobutton.set_active(true),
                 }
             }
@@ -277,6 +279,7 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
         setup_enum_radiobutton_callback!(
             f64_radiobutton: precision = Precision::Double
         );
+        #[cfg(feature = "f128")]
         setup_enum_radiobutton_callback!(
             f128_radiobutton: precision = Precision::Quad
         );

@@ -4,16 +4,16 @@ version = "0.2.0"
 edition = "2021"
 
 [features]
-default = ["custom_fractals", "multithread_generation"]
-custom_fractals = ["loader", "compile-in-memory", "nom", "either"]
+default = ["custom_fractals", "multithread_generation", "f128"]
+custom_fractals = ["loader", "compile-in-memory", "nom", "nom_locate", "either"]
 multithread_generation = ["num_cpus"]
+f128 = ["dep:f128"]
 
 [dependencies]
 num-complex = "0.4"
-gtk = "0.15"
+gtk = "0.16"
 blocking = "1.2"
 num-traits = "0.2.15"
-nom_locate = "4.0.0"
 
 [dependencies.image]
 version = "0.24"
@@ -22,6 +22,7 @@ default-features = false
 # Alignment bugfix not yet on crates.io
 [dependencies.f128]
 # version = "0.2.10"
+optional = true
 git = "https://github.com/zachs18/f128"
 rev = "eca88c0a28b4d0b729c490d9fef66ae406a07eb2"
 
@@ -42,6 +43,10 @@ path = "../compile-in-memory"
 [dependencies.nom]
 optional = true
 version = "7"
+
+[dependencies.nom_locate]
+optional = true
+version = "4"
 
 [dependencies.either]
 optional = true

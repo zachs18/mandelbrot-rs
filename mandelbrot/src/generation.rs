@@ -1,5 +1,6 @@
 use std::{ops::ControlFlow, sync::Arc, num::NonZeroU32};
 
+#[cfg(feature = "f128")]
 use f128::f128;
 use image::{Rgb, RgbImage, ImageBuffer};
 use num_complex::Complex;
@@ -9,6 +10,7 @@ use num_traits::{Num, NumCast, Float};
 pub enum Precision {
     Single,
     Double,
+    #[cfg(feature = "f128")]
     Quad,
 }
 
@@ -236,6 +238,7 @@ pub fn generate_mandelbrot(config: Config) -> RgbImage {
     match config.precision {
         Precision::Single => generate_mandelbrot_precision::<f32>(config),
         Precision::Double => generate_mandelbrot_precision::<f64>(config),
+        #[cfg(feature = "f128")]
         Precision::Quad => generate_mandelbrot_precision::<f128>(config),
     }
 }
@@ -255,6 +258,7 @@ pub fn generate_burning_ship(config: Config) -> RgbImage {
     match config.precision {
         Precision::Single => generate_burning_ship_precision::<f32>(config),
         Precision::Double => generate_burning_ship_precision::<f64>(config),
+        #[cfg(feature = "f128")]
         Precision::Quad => generate_burning_ship_precision::<f128>(config),
     }
 }
@@ -273,6 +277,7 @@ pub fn generate(config: Config) -> RgbImage {
                 let double = double.clone();
                 generate_with(config, move |val| double(val))
             }
+            #[cfg(feature = "f128")]
             Precision::Quad => {
                 let quad = quad.clone();
                 generate_with(config, move |val| quad(val))
