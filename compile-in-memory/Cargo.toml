@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 libc = "0.2"
-loader = { path = "../loader" }
+loader = { path = "../loader", default-features = false }
 
 [dev-dependencies]
 num-complex = "*"
