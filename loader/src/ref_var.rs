@@ -1,6 +1,9 @@
-use std::{ptr::NonNull, ops::{Deref, DerefMut}};
+use std::{
+    ops::{Deref, DerefMut},
+    ptr::NonNull,
+};
 
-use crate::{Library, AsPtr, AssertUnique, AssertShared};
+use crate::{AsPtr, AssertShared, AssertUnique, Library};
 
 #[derive(Debug, Clone, Copy)]
 pub struct LibraryVar<'a, T: ?Sized> {
@@ -10,7 +13,7 @@ pub struct LibraryVar<'a, T: ?Sized> {
 
 impl<'a, T: ?Sized> AsPtr for LibraryVar<'a, T> {
     type Pointer = *mut T;
-    fn as_ptr(&self) -> Self::Pointer {
+    unsafe fn as_ptr(&self) -> Self::Pointer {
         self.ptr.as_ptr()
     }
 }
@@ -36,28 +39,21 @@ impl<'a, T: ?Sized> Deref for AssertShared<LibraryVar<'a, T>> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        unsafe {
-            &*self.inner.ptr.as_ptr()
-        }
+        unsafe { &*self.inner.ptr.as_ptr() }
     }
 }
-
 
 impl<'a, T: ?Sized> Deref for AssertUnique<LibraryVar<'a, T>> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        unsafe {
-            &*self.inner.ptr.as_ptr()
-        }
+        unsafe { &*self.inner.ptr.as_ptr() }
     }
 }
 
 impl<'a, T: ?Sized> DerefMut for AssertUnique<LibraryVar<'a, T>> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe {
-            &mut *self.inner.ptr.as_ptr()
-        }
+        unsafe { &mut *self.inner.ptr.as_ptr() }
     }
 }
 
@@ -67,6 +63,5 @@ mod unsize {
 
     use super::LibraryVar;
 
-    impl<'a, T: ?Sized, U: ?Sized + Unsize<T>> CoerceUnsized<LibraryVar<'a, T>> for LibraryVar<'a, U> {
-    }
+    impl<'a, T: ?Sized, U: ?Sized + Unsize<T>> CoerceUnsized<LibraryVar<'a, T>> for LibraryVar<'a, U> {}
 }

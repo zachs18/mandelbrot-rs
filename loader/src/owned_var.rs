@@ -1,6 +1,10 @@
-use std::{ptr::NonNull, sync::Arc, ops::{Deref, DerefMut}};
+use std::{
+    ops::{Deref, DerefMut},
+    ptr::NonNull,
+    sync::Arc,
+};
 
-use crate::{Library, AsPtr, AssertUnique, AssertShared, Leak};
+use crate::{AsPtr, AssertShared, AssertUnique, Leak, Library};
 
 #[derive(Debug, Clone)]
 pub struct OwnedLibraryVar<T: ?Sized> {
@@ -10,7 +14,7 @@ pub struct OwnedLibraryVar<T: ?Sized> {
 
 impl<T: ?Sized> AsPtr for OwnedLibraryVar<T> {
     type Pointer = *mut T;
-    fn as_ptr(&self) -> Self::Pointer {
+    unsafe fn as_ptr(&self) -> Self::Pointer {
         self.ptr.as_ptr()
     }
 }
@@ -36,9 +40,7 @@ impl<T: ?Sized> Deref for AssertShared<OwnedLibraryVar<T>> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        unsafe {
-            &*self.inner.ptr.as_ptr()
-        }
+        unsafe { &*self.inner.ptr.as_ptr() }
     }
 }
 
@@ -46,17 +48,13 @@ impl<T: ?Sized> Deref for AssertUnique<OwnedLibraryVar<T>> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        unsafe {
-            &*self.inner.ptr.as_ptr()
-        }
+        unsafe { &*self.inner.ptr.as_ptr() }
     }
 }
 
 impl<T: ?Sized> DerefMut for AssertUnique<OwnedLibraryVar<T>> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe {
-            &mut *self.inner.ptr.as_ptr()
-        }
+        unsafe { &mut *self.inner.ptr.as_ptr() }
     }
 }
 
@@ -66,10 +64,7 @@ impl<T: ?Sized> Leak for OwnedLibraryVar<T> {
     fn leak(self) -> Self::Result {
         let OwnedLibraryVar { ptr, _library } = self;
         let _library = _library.leak();
-        crate::ref_var::LibraryVar {
-            ptr,
-            _library,
-        }
+        crate::ref_var::LibraryVar { ptr, _library }
     }
 }
 
@@ -79,6 +74,5 @@ mod unsize {
 
     use super::OwnedLibraryVar;
 
-    impl<T: ?Sized, U: ?Sized + Unsize<T>> CoerceUnsized<OwnedLibraryVar<T>> for OwnedLibraryVar<U> {
-    }
+    impl<T: ?Sized, U: ?Sized + Unsize<T>> CoerceUnsized<OwnedLibraryVar<T>> for OwnedLibraryVar<U> {}
 }

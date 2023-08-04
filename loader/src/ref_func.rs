@@ -1,4 +1,4 @@
-use crate::{Library, AsPtr, AssertUnique, AssertShared};
+use crate::{AsPtr, AssertShared, AssertUnique, Library};
 
 #[derive(Debug, Clone, Copy)]
 pub struct LibraryFunc<'a, F> {
@@ -8,7 +8,7 @@ pub struct LibraryFunc<'a, F> {
 
 impl<'a, F: Copy> AsPtr for LibraryFunc<'a, F> {
     type Pointer = F;
-    fn as_ptr(&self) -> Self::Pointer {
+    unsafe fn as_ptr(&self) -> Self::Pointer {
         self.ptr
     }
 }
@@ -40,19 +40,22 @@ macro_rules! make_fn_impls {
         impl<'a, $($ty ,)* R> FnOnce<($($ty,)*)> for AssertShared<LibraryFunc<'a, unsafe extern "C" fn($($ty,)*) -> R>> {
             type Output = R;
             extern "rust-call" fn call_once(self, ($($var,)*): ($($ty,)*)) -> Self::Output {
-                let f = self.as_ptr();
+                // SAFETY: self's lifetime will not end before the called function completes.
+                let f = unsafe { self.as_ptr() };
                 unsafe { f($($var,)*) }
             }
         }
         impl<'a, $($ty ,)* R> FnMut<($($ty,)*)> for AssertShared<LibraryFunc<'a, unsafe extern "C" fn($($ty,)*) -> R>> {
             extern "rust-call" fn call_mut(&mut self, ($($var,)*): ($($ty,)*)) -> Self::Output {
-                let f = self.as_ptr();
+                // SAFETY: self's lifetime will not end before the called function completes.
+                let f = unsafe { self.as_ptr() };
                 unsafe { f($($var,)*) }
             }
         }
         impl<'a, $($ty ,)* R> Fn<($($ty,)*)> for AssertShared<LibraryFunc<'a, unsafe extern "C" fn($($ty,)*) -> R>> {
             extern "rust-call" fn call(&self, ($($var,)*): ($($ty,)*)) -> Self::Output {
-                let f = self.as_ptr();
+                // SAFETY: self's lifetime will not end before the called function completes.
+                let f = unsafe { self.as_ptr() };
                 unsafe { f($($var,)*) }
             }
         }
@@ -60,13 +63,15 @@ macro_rules! make_fn_impls {
         impl<'a, $($ty ,)* R> FnOnce<($($ty,)*)> for AssertUnique<LibraryFunc<'a, unsafe extern "C" fn($($ty,)*) -> R>> {
             type Output = R;
             extern "rust-call" fn call_once(self, ($($var,)*): ($($ty,)*)) -> Self::Output {
-                let f = self.as_ptr();
+                // SAFETY: self's lifetime will not end before the called function completes.
+                let f = unsafe { self.as_ptr() };
                 unsafe { f($($var,)*) }
             }
         }
         impl<'a, $($ty ,)* R> FnMut<($($ty,)*)> for AssertUnique<LibraryFunc<'a, unsafe extern "C" fn($($ty,)*) -> R>> {
             extern "rust-call" fn call_mut(&mut self, ($($var,)*): ($($ty,)*)) -> Self::Output {
-                let f = self.as_ptr();
+                // SAFETY: self's lifetime will not end before the called function completes.
+                let f = unsafe { self.as_ptr() };
                 unsafe { f($($var,)*) }
             }
         }
@@ -75,19 +80,22 @@ macro_rules! make_fn_impls {
         impl<'a, $($ty ,)* R> FnOnce<($($ty,)*)> for AssertShared<LibraryFunc<'a, extern "C" fn($($ty,)*) -> R>> {
             type Output = R;
             extern "rust-call" fn call_once(self, ($($var,)*): ($($ty,)*)) -> Self::Output {
-                let f = self.as_ptr();
+                // SAFETY: self's lifetime will not end before the called function completes.
+                let f = unsafe { self.as_ptr() };
                 { f($($var,)*) }
             }
         }
         impl<'a, $($ty ,)* R> FnMut<($($ty,)*)> for AssertShared<LibraryFunc<'a, extern "C" fn($($ty,)*) -> R>> {
             extern "rust-call" fn call_mut(&mut self, ($($var,)*): ($($ty,)*)) -> Self::Output {
-                let f = self.as_ptr();
+                // SAFETY: self's lifetime will not end before the called function completes.
+                let f = unsafe { self.as_ptr() };
                 { f($($var,)*) }
             }
         }
         impl<'a, $($ty ,)* R> Fn<($($ty,)*)> for AssertShared<LibraryFunc<'a, extern "C" fn($($ty,)*) -> R>> {
             extern "rust-call" fn call(&self, ($($var,)*): ($($ty,)*)) -> Self::Output {
-                let f = self.as_ptr();
+                // SAFETY: self's lifetime will not end before the called function completes.
+                let f = unsafe { self.as_ptr() };
                 { f($($var,)*) }
             }
         }
@@ -95,13 +103,15 @@ macro_rules! make_fn_impls {
         impl<'a, $($ty ,)* R> FnOnce<($($ty,)*)> for AssertUnique<LibraryFunc<'a, extern "C" fn($($ty,)*) -> R>> {
             type Output = R;
             extern "rust-call" fn call_once(self, ($($var,)*): ($($ty,)*)) -> Self::Output {
-                let f = self.as_ptr();
+                // SAFETY: self's lifetime will not end before the called function completes.
+                let f = unsafe { self.as_ptr() };
                 { f($($var,)*) }
             }
         }
         impl<'a, $($ty ,)* R> FnMut<($($ty,)*)> for AssertUnique<LibraryFunc<'a, extern "C" fn($($ty,)*) -> R>> {
             extern "rust-call" fn call_mut(&mut self, ($($var,)*): ($($ty,)*)) -> Self::Output {
-                let f = self.as_ptr();
+                // SAFETY: self's lifetime will not end before the called function completes.
+                let f = unsafe { self.as_ptr() };
                 { f($($var,)*) }
             }
         }
@@ -110,9 +120,7 @@ macro_rules! make_fn_impls {
 
 #[cfg(not(feature = "fn_traits"))]
 macro_rules! make_fn_impls {
-    ($($_:tt)*) => {
-        
-    };
+    ($($_:tt)*) => {};
 }
 
 make_fn_impls!();

@@ -233,7 +233,8 @@ impl Library {
 
 pub trait AsPtr {
     type Pointer;
-    fn as_ptr(&self) -> Self::Pointer;
+    /// This pointer may point to data which is tied to `self`'s lifetime. However, this pointer may be a (safe) `fn` pointer, which is callable without any `unsafe`. Thus this function is unsafe.
+    unsafe fn as_ptr(&self) -> Self::Pointer;
 }
 
 pub trait Leak {
@@ -265,22 +266,22 @@ unsafe impl<T: ?Sized> Sync for AssertSendSync<T> {}
 
 impl<T: AsPtr + ?Sized> AsPtr for AssertShared<T> {
     type Pointer = T::Pointer;
-    fn as_ptr(&self) -> Self::Pointer {
-        self.inner.as_ptr()
+    unsafe fn as_ptr(&self) -> Self::Pointer {
+        unsafe { self.inner.as_ptr() }
     }
 }
 
 impl<T: AsPtr + ?Sized> AsPtr for AssertUnique<T> {
     type Pointer = T::Pointer;
-    fn as_ptr(&self) -> Self::Pointer {
-        self.inner.as_ptr()
+    unsafe fn as_ptr(&self) -> Self::Pointer {
+        unsafe { self.inner.as_ptr() }
     }
 }
 
 impl<T: AsPtr + ?Sized> AsPtr for AssertSendSync<T> {
     type Pointer = T::Pointer;
-    fn as_ptr(&self) -> Self::Pointer {
-        self.inner.as_ptr()
+    unsafe fn as_ptr(&self) -> Self::Pointer {
+        unsafe { self.inner.as_ptr() }
     }
 }
 
