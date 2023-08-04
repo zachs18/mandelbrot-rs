@@ -1,6 +1,6 @@
 [package]
 name = "loader"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]
@@ -10,3 +10,4 @@ libc = "0.2"
 default = ["unsize", "fn_traits"]
 unsize = []
 fn_traits = []
+fn_ptr_trait = []

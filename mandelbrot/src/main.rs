@@ -1,7 +1,7 @@
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
-    str::FromStr, sync::Arc, ffi::CString,
+    str::FromStr, sync::Arc,
 };
 
 use blocking::unblock;
@@ -24,6 +24,7 @@ use gtk::traits::ContainerExt;
 use image::RgbImage;
 #[cfg(feature = "custom_fractals")]
 use loader::AssertSendSyncExt;
+use loader::LibraryError;
 use num_complex::Complex;
 use num_traits::Zero;
 use watch::local::Watched;
@@ -332,7 +333,7 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
 
                     type Callback<T> = extern "C" fn(*mut Complex<T>, *const Complex<T>, *const Complex<T>);
 
-                    let (single, double, quad) = match (|| Ok::<_, CString>((
+                    let (single, double, quad) = match (|| Ok::<_, LibraryError>((
                         handle.sym_func_owned::<Callback<f32>>(loader::c_str!("func32"))?,
                         handle.sym_func_owned::<Callback<f64>>(loader::c_str!("func64"))?,
                         handle.sym_func_owned::<Callback<f128>>(loader::c_str!("func128"))?,

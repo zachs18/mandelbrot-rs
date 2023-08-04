@@ -2,17 +2,31 @@
 #![cfg_attr(feature = "unsize", feature(coerce_unsized))]
 #![cfg_attr(feature = "fn_traits", feature(unboxed_closures))]
 #![cfg_attr(feature = "fn_traits", feature(fn_traits))]
+#![cfg_attr(feature = "fn_ptr_trait", feature(fn_ptr_trait))]
 #![deny(unsafe_op_in_unsafe_fn)]
 
 #[cfg(not(unix))]
 compile_error!("Not supported on non-unix platforms");
 
-pub mod ref_var;
-pub mod ref_func;
-pub mod owned_var;
-pub mod owned_func;
+#[cfg(feature = "fn_ptr_trait")]
+use std::marker::FnPtr;
 
-use std::{ffi::{CStr, CString}, ptr::NonNull, sync::Arc, ops::{Deref, DerefMut}};
+#[cfg(not(feature = "fn_ptr_trait"))]
+mod fn_ptr_trait;
+#[cfg(not(feature = "fn_ptr_trait"))]
+use fn_ptr_trait::FnPtr;
+
+pub mod owned_func;
+pub mod owned_var;
+pub mod ref_func;
+pub mod ref_var;
+
+use std::{
+    ffi::{CStr, CString},
+    ops::{Deref, DerefMut},
+    ptr::NonNull,
+    sync::Arc,
+};
 
 use owned_func::OwnedLibraryFunc;
 use owned_var::OwnedLibraryVar;
@@ -21,40 +35,70 @@ use ref_var::LibraryVar;
 
 #[macro_export]
 macro_rules! c_str {
-    ($s:literal) => {
+    ($s:literal) => {{
+        static S: &'static str = concat!($s, "\0");
+        ::std::ffi::CStr::from_bytes_with_nul(S.as_bytes()).unwrap()
+    }};
+}
+
+struct WithDlerrorResult<R> {
+    #[allow(unused)]
+    previous_error: Option<CString>,
+    value: R,
+    error: Option<CString>,
+}
+
+unsafe fn get_dlerror_unlocked() -> Option<CString> {
+    let error = unsafe { libc::dlerror() };
+    if !error.is_null() {
+        Some(unsafe { CStr::from_ptr(error) }.to_owned())
+    } else {
+        None
+    }
+}
+
+/// The passed closure should invoke at most one `dlopen`-API function at most once.
+unsafe fn with_dlerror<R>(f: impl FnOnce() -> R) -> WithDlerrorResult<R> {
+    let _guard = {
+        // dlerror is not required by POSIX-1.2017 to be thread-safe, so
+        // employ a static mutex to ensure this library only calls it from one thread at a time.
+        // NOTE: Other code making dlerror calls (not from this crate) will race with this.
+        #[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
         {
-            static S: &'static str = concat!($s, "\0");
-            ::std::ffi::CStr::from_bytes_with_nul(S.as_bytes()).unwrap()
+            static DLERROR_LOCK: Mutex<()> = Mutex::new(());
+            DLERROR_LOCK.lock().expect("failed to lock dlerror mutex")
         }
+        // dlerror is thread-safe on Linux and macOs,
+        // but re-uses the buffer between calls on the same thread.
     };
-}
-
-/// dlerror is thread-safe on Linux and macOs,
-/// but re-uses the buffer between calls on the same thread.
-#[cfg(all(unix, any(target_os = "linux", target_os = "macos")))]
-unsafe fn get_dlerror() -> Option<CString> {
-    let error = unsafe { libc::dlerror() };
-    if !error.is_null() {
-        Some(unsafe { CStr::from_ptr(error) }.to_owned())
-    } else {
-        None
+    // Both to ensure `error` is updated, and to perhaps debug-check that no previous error occurred;
+    let previous_error = unsafe { get_dlerror_unlocked() };
+    let value = f();
+    let error = unsafe { get_dlerror_unlocked() };
+    WithDlerrorResult {
+        previous_error,
+        value,
+        error,
     }
 }
 
-/// dlerror is not required by POSIX-1.2017 to be thread-safe, so 
-/// employ a static mutex to ensure this library only calls it from one thread at a time.
-/// NOTE: Other code making dlerror calls (not from this crate) will race with this.
-#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
-unsafe fn get_dlerror() -> Option<CString> {
-    static DLERROR_LOCK: Mutex<()> = Mutex::new(());
-    let guard = DLERROR_LOCK.lock().expect("failed to lock dlerror mutex");
-    let error = unsafe { libc::dlerror() };
-    if !error.is_null() {
-        Some(unsafe { CStr::from_ptr(error) }.to_owned())
-    } else {
-        None
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum LibraryError {
+    Dlerror(CString),
+    NullSymbol,
+}
+
+impl std::fmt::Display for LibraryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LibraryError::Dlerror(msg) => write!(f, "dlerror: {msg:?}"),
+            LibraryError::NullSymbol => write!(f, "null symbol"),
+        }
     }
 }
+
+impl std::error::Error for LibraryError {}
 
 #[derive(Debug)]
 pub struct Library {
@@ -63,11 +107,9 @@ pub struct Library {
 
 impl Drop for Library {
     fn drop(&mut self) {
-        let _result = unsafe {
-            libc::dlclose(self.handle.as_ptr())
-        };
+        let _result = unsafe { with_dlerror(|| libc::dlclose(self.handle.as_ptr())) };
         #[cfg(debug_assertions)]
-        assert_eq!(_result, 0, "dlclose failed: {:?}", unsafe { get_dlerror() });
+        assert_eq!(_result.value, 0, "dlclose failed: {:?}", _result.error);
     }
 }
 
@@ -81,56 +123,111 @@ impl Library {
     }
 
     fn dlopen_impl(filename: Option<&CStr>, bind_lazy: bool) -> Result<Self, CString> {
-        let flags = if bind_lazy { libc::RTLD_LAZY } else { libc::RTLD_NOW };
-        let filename = filename.map(CStr::as_ptr).unwrap_or(std::ptr::null());
-        let handle = unsafe {
-            libc::dlopen(filename, flags)
+        let flags = if bind_lazy {
+            libc::RTLD_LAZY
+        } else {
+            libc::RTLD_NOW
         };
-        if let Some(handle) = NonNull::new(handle) {
+        let filename = filename.map(CStr::as_ptr).unwrap_or(std::ptr::null());
+        let handle = unsafe { with_dlerror(|| libc::dlopen(filename, flags)) };
+        if let Some(handle) = NonNull::new(handle.value) {
             Ok(Library { handle })
         } else {
-            Err(unsafe { get_dlerror() }.unwrap())
+            Err(handle.error.unwrap())
         }
     }
 
-    // TODO: handle NULL symbols gracefully (instead of panicking)
-
-    pub fn sym_var<'a, T>(&'a self, symbol: &CStr) -> Result<LibraryVar<'a, T>, CString> {
-        let symbol = unsafe {
-            libc::dlsym(self.handle.as_ptr(), symbol.as_ptr())
-        };
-        if let Some(symbol) = NonNull::new(symbol) {
-            Ok(LibraryVar { ptr: symbol.cast(), _library: self  })
+    /// Returns Ok(None) if `symbol`'s value is NULL. Returns `Err(msg)` if dlsym failed with error `msg`.
+    pub fn sym_var<'a, T>(&'a self, symbol: &CStr) -> Result<LibraryVar<'a, T>, LibraryError> {
+        let symbol = unsafe { with_dlerror(|| libc::dlsym(self.handle.as_ptr(), symbol.as_ptr())) };
+        if let Some(error) = symbol.error {
+            Err(LibraryError::Dlerror(error))
+        } else if let Some(symbol) = NonNull::new(symbol.value) {
+            Ok(LibraryVar {
+                ptr: symbol.cast(),
+                _library: self,
+            })
         } else {
-            Err(unsafe { get_dlerror() }.unwrap())
+            Err(LibraryError::NullSymbol)
         }
     }
 
     /// F must be a function pointer type
-    pub fn sym_func<'a, F: Copy>(&'a self, symbol: &CStr) -> Result<LibraryFunc<'a, F>, CString> {
-        let symbol = unsafe {
-            libc::dlsym(self.handle.as_ptr(), symbol.as_ptr())
-        };
-        if let Some(symbol) = NonNull::new(symbol) {
+    ///
+    /// Returns Ok(None) if `symbol`'s value is NULL. Returns `Err(msg)` if dlsym failed with error `msg`.
+    pub fn sym_func<'a, F: FnPtr>(
+        &'a self,
+        symbol: &CStr,
+    ) -> Result<LibraryFunc<'a, F>, LibraryError> {
+        unsafe { self.sym_func_unchecked(symbol) }
+    }
+
+    /// F must be a function pointer type
+    ///
+    /// Returns Ok(None) if `symbol`'s value is NULL. Returns `Err(msg)` if dlsym failed with error `msg`.
+    pub unsafe fn sym_func_unchecked<'a, F>(
+        &'a self,
+        symbol: &CStr,
+    ) -> Result<LibraryFunc<'a, F>, LibraryError> {
+        let symbol = unsafe { with_dlerror(|| libc::dlsym(self.handle.as_ptr(), symbol.as_ptr())) };
+        if let Some(error) = symbol.error {
+            Err(LibraryError::Dlerror(error))
+        } else if let Some(symbol) = NonNull::new(symbol.value) {
             // Cannot use transmute because F is not statically guaranteed to be sizeof(pointer)
             // let ptr: F = unsafe { std::mem::transmute(symbol.as_ptr()) };
-            assert_eq!(std::mem::size_of::<F>(), std::mem::size_of::<*mut libc::c_void>(), "Only function pointers can be used with LibraryFunc.");
+            assert_eq!(
+                std::mem::size_of::<F>(),
+                std::mem::size_of::<*mut libc::c_void>(),
+                "Only function pointers can be used with LibraryFunc."
+            );
             let ptr: F = unsafe { std::mem::transmute_copy(&symbol) };
-            Ok(LibraryFunc { ptr, _library: self })
+            Ok(LibraryFunc {
+                ptr,
+                _library: self,
+            })
         } else {
-            Err(unsafe { get_dlerror() }.unwrap())
+            Err(LibraryError::NullSymbol)
         }
     }
 
-    pub fn sym_var_owned<T>(self: &Arc<Self>, symbol: &CStr) -> Result<OwnedLibraryVar<T>, CString> {
+    /// Returns Ok(None) if `symbol`'s value is NULL. Returns `Err(msg)` if dlsym failed with error `msg`.
+    pub fn sym_var_owned<T>(
+        self: &Arc<Self>,
+        symbol: &CStr,
+    ) -> Result<OwnedLibraryVar<T>, LibraryError> {
         let LibraryVar { ptr, .. } = self.sym_var::<T>(symbol)?;
-        Ok(OwnedLibraryVar { ptr, _library: self.clone() })
+        Ok(OwnedLibraryVar {
+            ptr,
+            _library: self.clone(),
+        })
     }
 
     /// F must be a function pointer type
-    pub fn sym_func_owned<F: Copy>(self: &Arc<Self>, symbol: &CStr) -> Result<OwnedLibraryFunc<F>, CString> {
+    ///
+    /// Returns Ok(None) if `symbol`'s value is NULL. Returns `Err(msg)` if dlsym failed with error `msg`.
+    pub fn sym_func_owned<F: FnPtr>(
+        self: &Arc<Self>,
+        symbol: &CStr,
+    ) -> Result<OwnedLibraryFunc<F>, LibraryError> {
         let LibraryFunc { ptr, .. } = self.sym_func::<F>(symbol)?;
-        Ok(OwnedLibraryFunc { ptr, _library: self.clone() })
+        Ok(OwnedLibraryFunc {
+            ptr,
+            _library: self.clone(),
+        })
+    }
+
+    /// F must be a function pointer type.
+    ///
+    /// Returns Ok(None) if `symbol`'s value is NULL. Returns `Err(msg)` if dlsym failed with error `msg`.
+    pub unsafe fn sym_func_owned_unchecked<F>(
+        self: &Arc<Self>,
+        symbol: &CStr,
+    ) -> Result<OwnedLibraryFunc<F>, LibraryError> {
+        let LibraryFunc { ptr, .. } = unsafe { self.sym_func_unchecked::<F>(symbol) }?;
+        Ok(OwnedLibraryFunc {
+            ptr,
+            _library: self.clone(),
+        })
     }
 }
 
@@ -166,7 +263,6 @@ pub struct AssertSendSync<T: ?Sized> {
 unsafe impl<T: ?Sized> Send for AssertSendSync<T> {}
 unsafe impl<T: ?Sized> Sync for AssertSendSync<T> {}
 
-
 impl<T: AsPtr + ?Sized> AsPtr for AssertShared<T> {
     type Pointer = T::Pointer;
     fn as_ptr(&self) -> Self::Pointer {
@@ -191,21 +287,27 @@ impl<T: AsPtr + ?Sized> AsPtr for AssertSendSync<T> {
 impl<T: Leak> Leak for AssertShared<T> {
     type Result = AssertShared<T::Result>;
     fn leak(self) -> Self::Result {
-        AssertShared{ inner: self.inner.leak() }
+        AssertShared {
+            inner: self.inner.leak(),
+        }
     }
 }
 
 impl<T: Leak> Leak for AssertUnique<T> {
     type Result = AssertUnique<T::Result>;
     fn leak(self) -> Self::Result {
-        AssertUnique{ inner: self.inner.leak() }
+        AssertUnique {
+            inner: self.inner.leak(),
+        }
     }
 }
 
 impl<T: Leak> Leak for AssertSendSync<T> {
     type Result = AssertSendSync<T::Result>;
     fn leak(self) -> Self::Result {
-        AssertSendSync{ inner: self.inner.leak() }
+        AssertSendSync {
+            inner: self.inner.leak(),
+        }
     }
 }
 
@@ -214,7 +316,7 @@ impl<T: ?Sized + 'static> Leak for Arc<T> {
 
     fn leak(self) -> Self::Result {
         let raw = Arc::into_raw(self);
-        unsafe {&*raw}
+        unsafe { &*raw }
     }
 }
 
@@ -242,18 +344,17 @@ pub trait AssertSendSyncExt: Sized {
 
 impl<T> AssertSendSyncExt for T {}
 
-
 #[cfg(feature = "unsize")]
 mod unsize {
-    use crate::{AssertShared, AssertUnique, AssertSendSync};
+    use crate::{AssertSendSync, AssertShared, AssertUnique};
 
     use std::ops::CoerceUnsized;
 
-    impl<T: ?Sized, U: ?Sized + CoerceUnsized<T>> CoerceUnsized<AssertShared<T>> for AssertShared<U> {
-    }
-    impl<T: ?Sized, U: ?Sized + CoerceUnsized<T>> CoerceUnsized<AssertUnique<T>> for AssertUnique<U> {
-    }
-    impl<T: ?Sized, U: ?Sized + CoerceUnsized<T>> CoerceUnsized<AssertSendSync<T>> for AssertSendSync<U> {
+    impl<T: ?Sized, U: ?Sized + CoerceUnsized<T>> CoerceUnsized<AssertShared<T>> for AssertShared<U> {}
+    impl<T: ?Sized, U: ?Sized + CoerceUnsized<T>> CoerceUnsized<AssertUnique<T>> for AssertUnique<U> {}
+    impl<T: ?Sized, U: ?Sized + CoerceUnsized<T>> CoerceUnsized<AssertSendSync<T>>
+        for AssertSendSync<U>
+    {
     }
 }
 
@@ -303,14 +404,16 @@ mod fn_traits {
 
 #[cfg(test)]
 pub mod tests {
-    use std::sync::atomic::{Ordering, AtomicUsize};
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
 
     #[test]
     fn sin() {
         let libm = Library::new(c_str!("libm.so.6"), false).unwrap();
-        let sin = libm.sym_func::<extern "C" fn(f64) -> f64>(c_str!("sin")).unwrap();
+        let sin = libm
+            .sym_func::<extern "C" fn(f64) -> f64>(c_str!("sin"))
+            .expect("symbol is present and not null");
         let sin = unsafe { sin.assert_callable_shared() };
         #[cfg(feature = "fn_traits")]
         assert_eq!(0.0, sin(0.0));
@@ -320,7 +423,11 @@ pub mod tests {
     #[test]
     fn snprintf() {
         let libc = Library::new(c_str!("libc.so.6"), false).unwrap();
-        let snprintf = libc.sym_func::<unsafe extern "C" fn(*mut i8, usize, *const i8, ...) -> i32>(c_str!("snprintf")).unwrap();
+        let snprintf = libc
+            .sym_func::<unsafe extern "C" fn(*mut i8, usize, *const i8, ...) -> i32>(c_str!(
+                "snprintf"
+            ))
+            .expect("symbol is present and not null");
         let mut buf = [0u8; 64];
         let result = unsafe {
             snprintf.as_ptr()(
@@ -337,7 +444,9 @@ pub mod tests {
     fn owned() {
         let libm = Library::new(c_str!("libm.so.6"), false).unwrap();
         let libm = Arc::new(libm);
-        let sin = libm.sym_func_owned::<extern "C" fn(f64) -> f64>(c_str!("sin")).unwrap();
+        let sin = libm
+            .sym_func_owned::<extern "C" fn(f64) -> f64>(c_str!("sin"))
+            .expect("symbol is present and not null");
         drop(libm);
         let sin = unsafe { sin.assert_shared() };
         #[cfg(feature = "fn_traits")]
@@ -354,7 +463,9 @@ pub mod tests {
     fn leak() {
         let libm = Library::new(c_str!("libm.so.6"), false).unwrap();
         let libm = Arc::new(libm);
-        let sin = libm.sym_func_owned::<extern "C" fn(f64) -> f64>(c_str!("sin")).unwrap();
+        let sin = libm
+            .sym_func_owned::<extern "C" fn(f64) -> f64>(c_str!("sin"))
+            .expect("symbol is present and not null");
         drop(libm);
         let sin = unsafe { sin.assert_shared() };
         let sin = sin.leak();
@@ -366,7 +477,9 @@ pub mod tests {
     #[test]
     fn this_program() {
         let this = Arc::new(Library::this_program().unwrap());
-        let counter = this.sym_var_owned::<AtomicUsize>(c_str!("COUNTER")).unwrap();
+        let counter = this
+            .sym_var_owned::<AtomicUsize>(c_str!("COUNTER"))
+            .expect("symbol is present and not null");
         let counter = unsafe { counter.assert_shared().assert_send_sync() };
         counter.fetch_add(1, Ordering::Relaxed);
         COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -394,7 +507,9 @@ pub mod tests {
     #[test]
     fn unsize() {
         let this = Library::this_program().unwrap();
-        let array = this.sym_var::<[usize; 64]>(c_str!("ARRAY")).unwrap();
+        let array = this
+            .sym_var::<[usize; 64]>(c_str!("ARRAY"))
+            .expect("symbol is present and not null");
         let array = unsafe { array.assert_unique() };
         let mut array: AssertUnique<LibraryVar<[usize]>> = array;
         assert_eq!(array.len(), 64);
