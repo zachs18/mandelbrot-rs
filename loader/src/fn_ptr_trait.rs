@@ -2,7 +2,6 @@ pub unsafe trait FnPtr: Copy {
     fn addr(self) -> *const ();
 }
 
-#[cfg(feature = "fn_traits")]
 macro_rules! make_fn_trait_impls {
     ([no_variadic] $($ty:ident)*) => {
         unsafe impl<$($ty ,)* R> FnPtr for unsafe extern "C" fn($($ty,)*) -> R {
