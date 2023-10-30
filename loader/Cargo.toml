@@ -2,6 +2,13 @@
 name = "loader"
 version = "0.2.1"
 edition = "2021"
+authors = ["Zachary S"]
+description = "You probably want to use libloading"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/zachs18/mandelbrot-rs"
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu", "i686-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
 
 [dependencies]
 libc = "0.2"
