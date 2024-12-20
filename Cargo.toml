@@ -9,3 +9,7 @@ members = [
 
 [profile.dev]
 opt-level = 1
+
+[patch.crates-io.num-traits]
+git = "https://github.com/zachs18/num-traits.git"
+branch = "f128"

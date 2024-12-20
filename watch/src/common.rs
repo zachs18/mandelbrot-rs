@@ -1,4 +1,7 @@
-use std::{task::Waker, ops::{Deref, DerefMut}};
+use std::{
+    ops::{Deref, DerefMut},
+    task::Waker,
+};
 
 pub trait Exists {}
 impl<T: ?Sized> Exists for T {}

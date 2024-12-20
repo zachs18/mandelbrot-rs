@@ -1,10 +1,8 @@
-use std::{ops::ControlFlow, sync::Arc, num::NonZeroU32};
+use std::{num::NonZeroU32, ops::ControlFlow, sync::Arc};
 
-#[cfg(feature = "f128")]
-use f128::f128;
-use image::{Rgb, RgbImage, ImageBuffer};
+use image::{ImageBuffer, Rgb, RgbImage};
 use num_complex::Complex;
-use num_traits::{Num, NumCast, Float};
+use num_traits::{Float, Num, NumCast};
 
 #[derive(Debug, Clone, Copy)]
 pub enum Precision {
@@ -14,16 +12,20 @@ pub enum Precision {
     Quad,
 }
 
+type FunctionGenerator<T> =
+    dyn Sync + Send + Fn(Complex<T>) -> Box<dyn FnMut(Complex<T>) -> Complex<T>>;
+
 #[derive(Clone)]
 pub enum Fractal {
     Mandelbrot,
     BurningShip,
     #[cfg(feature = "custom_fractals")]
     Custom {
-        single: Arc<dyn Sync + Send + Fn(Complex<f32>) -> Box<dyn FnMut(Complex<f32>) -> Complex<f32>>>,
-        double: Arc<dyn Sync + Send + Fn(Complex<f64>) -> Box<dyn FnMut(Complex<f64>) -> Complex<f64>>>,
-        quad: Arc<dyn Sync + Send + Fn(Complex<f128>) -> Box<dyn FnMut(Complex<f128>) -> Complex<f128>>>,
-    }
+        single: Arc<FunctionGenerator<f32>>,
+        double: Arc<FunctionGenerator<f64>>,
+        #[cfg(feature = "f128")]
+        quad: Arc<FunctionGenerator<f128>>,
+    },
 }
 
 impl std::fmt::Debug for Fractal {
@@ -77,20 +79,27 @@ fn fraction_to_hue(x: f64) -> Rgb<u8> {
     }
 }
 
-fn split_chunks(image: &mut RgbImage, split_count: NonZeroU32) -> (u32, Vec<ImageBuffer<Rgb<u8>, &mut [u8]>>) {
+fn split_chunks(
+    image: &mut RgbImage,
+    split_count: NonZeroU32,
+) -> (u32, Vec<ImageBuffer<Rgb<u8>, &mut [u8]>>) {
     let width = image.width();
     let height = image.height();
     let image = std::ops::DerefMut::deref_mut(image);
     let common_height = height / split_count;
     let last_height = height - common_height * (split_count.get() - 1);
     if common_height == 0 || split_count.get() == 1 {
-        return (height, vec![ImageBuffer::from_raw(width, height, image).unwrap()]);
+        return (
+            height,
+            vec![ImageBuffer::from_raw(width, height, image).unwrap()],
+        );
     }
 
     let common_size = common_height as usize * width as usize * 3;
     let last_size = last_height as usize * width as usize * 3;
 
-    let mut chunks = Vec::with_capacity(split_count.get().try_into().expect("u32 -> usize overflow"));
+    let mut chunks =
+        Vec::with_capacity(split_count.get().try_into().expect("u32 -> usize overflow"));
 
     (0..split_count.get()).fold(image, |image, chunk| {
         if chunk < split_count.get() - 1 {
@@ -112,10 +121,10 @@ fn split_chunks(image: &mut RgbImage, split_count: NonZeroU32) -> (u32, Vec<Imag
 }
 
 pub fn generate_with<T, F, G>(config: Config, iteration_fn_maker: F) -> RgbImage
-    where
-        T: Clone + Send + Sync + Num + PartialOrd + NumCast,
-        F: Clone + Send + Sync + Fn(Complex<T>) -> G,
-        G: FnMut(Complex<T>) -> Complex<T>,
+where
+    T: Clone + Send + Sync + Num + PartialOrd + NumCast,
+    F: Clone + Send + Sync + Fn(Complex<T>) -> G,
+    G: FnMut(Complex<T>) -> Complex<T>,
 {
     let Config {
         size: (width, height),
@@ -137,23 +146,29 @@ pub fn generate_with<T, F, G>(config: Config, iteration_fn_maker: F) -> RgbImage
         let limit = T::from(4.0).unwrap();
         let zero = T::from(0.0).unwrap();
 
-        let process_chunk = move |mut chunk: ImageBuffer<Rgb<u8>, &mut [u8]>, idx: usize, common_height: u32| {
+        let process_chunk = move |mut chunk: ImageBuffer<Rgb<u8>, &mut [u8]>,
+                                  idx: usize,
+                                  common_height: u32| {
             let start_row = idx as u32 * common_height;
             for y in 0..chunk.height() {
-                let im: T = cy.clone() + T::from((y + start_row) as f64 - height as f64 / 2.0).unwrap() / zoom.clone();
+                let im: T = cy.clone()
+                    + T::from((y + start_row) as f64 - height as f64 / 2.0).unwrap() / zoom.clone();
                 for x in 0..width {
-                    let re: T = cx.clone() + T::from(x as f64 - width as f64 / 2.0).unwrap() / zoom.clone();
+                    let re: T =
+                        cx.clone() + T::from(x as f64 - width as f64 / 2.0).unwrap() / zoom.clone();
                     let c = Complex { re, im: im.clone() };
                     let mut f = iteration_fn_maker(c);
-                    let iterations =
-                        (0..max_iterations).try_fold(Complex::new(zero.clone(), zero.clone()), |val, iteration| {
+                    let iterations = (0..max_iterations).try_fold(
+                        Complex::new(zero.clone(), zero.clone()),
+                        |val, iteration| {
                             let val = f(val);
                             if val.norm_sqr() > limit {
                                 ControlFlow::Break(iteration)
                             } else {
                                 ControlFlow::Continue(val)
                             }
-                        });
+                        },
+                    );
 
                     *chunk.get_pixel_mut(x, y) = match iterations {
                         ControlFlow::Break(it) => {
@@ -166,7 +181,12 @@ pub fn generate_with<T, F, G>(config: Config, iteration_fn_maker: F) -> RgbImage
         };
 
         // Subtract one, to leave one core for the GUI thread.
-        let threads = NonZeroU32::new((num_cpus::get().max(2) - 1).try_into().expect("u32 -> usize overflow")).unwrap();
+        let threads = NonZeroU32::new(
+            (num_cpus::get().max(2) - 1)
+                .try_into()
+                .expect("u32 -> usize overflow"),
+        )
+        .unwrap();
 
         let (common_height, chunks) = split_chunks(&mut img, threads);
 
@@ -202,15 +222,17 @@ pub fn generate_with<T, F, G>(config: Config, iteration_fn_maker: F) -> RgbImage
             let re: T = cx.clone() + T::from(x as f64 - width as f64 / 2.0).unwrap() / zoom.clone();
             let c = Complex { re, im: im.clone() };
             let mut f = iteration_fn_maker(c);
-            let iterations =
-                (0..max_iterations).try_fold(Complex::new(zero.clone(), zero.clone()), |val, iteration| {
+            let iterations = (0..max_iterations).try_fold(
+                Complex::new(zero.clone(), zero.clone()),
+                |val, iteration| {
                     let val = f(val);
                     if val.norm_sqr() > limit {
                         ControlFlow::Break(iteration)
                     } else {
                         ControlFlow::Continue(val)
                     }
-                });
+                },
+            );
 
             *img.get_pixel_mut(x, y) = match iterations {
                 ControlFlow::Break(it) => {
@@ -225,13 +247,11 @@ pub fn generate_with<T, F, G>(config: Config, iteration_fn_maker: F) -> RgbImage
 }
 
 pub fn generate_mandelbrot_precision<T>(config: Config) -> RgbImage
-    where
-        T: Clone + Send + Sync + Num + PartialOrd + NumCast
+where
+    T: Clone + Send + Sync + Num + PartialOrd + NumCast,
 {
     generate_with(config, |c: Complex<T>| {
-        move |z: Complex<T>| {
-            z.clone() * z + c.clone()
-        }
+        move |z: Complex<T>| z.clone() * z + c.clone()
     })
 }
 pub fn generate_mandelbrot(config: Config) -> RgbImage {
@@ -245,11 +265,14 @@ pub fn generate_mandelbrot(config: Config) -> RgbImage {
 
 pub fn generate_burning_ship_precision<T>(config: Config) -> RgbImage
 where
-    T: Clone + Send + Sync + Num + PartialOrd + NumCast + Float
+    T: Clone + Send + Sync + Num + PartialOrd + NumCast + Float,
 {
     generate_with(config, |c: Complex<T>| {
         move |z: Complex<T>| {
-            let z = Complex { re: z.re.abs(), im: z.im.abs() };
+            let z = Complex {
+                re: z.re.abs(),
+                im: z.im.abs(),
+            };
             z * z + c
         }
     })
@@ -268,7 +291,12 @@ pub fn generate(config: Config) -> RgbImage {
         Fractal::Mandelbrot => generate_mandelbrot(config),
         Fractal::BurningShip => generate_burning_ship(config),
         #[cfg(feature = "custom_fractals")]
-        Fractal::Custom { single, double, quad } => match config.precision {
+        Fractal::Custom {
+            single,
+            double,
+            #[cfg(feature = "f128")]
+            quad,
+        } => match config.precision {
             Precision::Single => {
                 let single = single.clone();
                 generate_with(config, move |val| single(val))
@@ -283,6 +311,5 @@ pub fn generate(config: Config) -> RgbImage {
                 generate_with(config, move |val| quad(val))
             }
         },
-        
     }
 }

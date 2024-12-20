@@ -1,8 +1,8 @@
 use nom::{
     branch::alt,
-    bytes::complete::{tag, is_a},
+    bytes::complete::{is_a, tag},
     character::complete::{alpha1, alphanumeric1, multispace0},
-    combinator::{map, recognize, opt},
+    combinator::{map, opt, recognize},
     multi::{many0, many0_count, many1_count},
     sequence::{delimited, pair, tuple},
     IResult, Parser,
@@ -39,7 +39,14 @@ token_fn!(op_divide: "/" => TokenKind::Op(Op::Divide));
 token_fn!(op_conjugate: "~" => TokenKind::Op(Op::Conjugate));
 
 fn op(input: Span) -> IResult<Span, Token> {
-    alt((op_assign, op_plus, op_minus, op_times, op_divide, op_conjugate))(input)
+    alt((
+        op_assign,
+        op_plus,
+        op_minus,
+        op_times,
+        op_divide,
+        op_conjugate,
+    ))(input)
 }
 
 token_fn!(punct_lparen: "(" => TokenKind::LParen);
@@ -55,9 +62,9 @@ fn ident(input: Span) -> IResult<Span, Token> {
     recognize(pair(
         alt((alpha1, tag("_"))),
         many0_count(alt((alphanumeric1, tag("_")))),
-    )).map(
-        |span| (TokenKind::Ident, span),
-    ).parse(input)
+    ))
+    .map(|span| (TokenKind::Ident, span))
+    .parse(input)
 }
 
 fn literal(input: Span) -> IResult<Span, Token> {
@@ -66,18 +73,16 @@ fn literal(input: Span) -> IResult<Span, Token> {
         opt(tuple((
             tag("."),
             many1_count(is_a("0123456789")),
-            opt(
-                tuple((
-                    is_a("eE"),
-                    opt(is_a("-+")),
-                    many1_count(is_a("0123456789")),
-                ))
-            ),
+            opt(tuple((
+                is_a("eE"),
+                opt(is_a("-+")),
+                many1_count(is_a("0123456789")),
+            ))),
         ))),
         opt(tag("i")),
-    ))).map(|span| {
-        (TokenKind::Literal, span)
-    }).parse(input)
+    )))
+    .map(|span| (TokenKind::Literal, span))
+    .parse(input)
 }
 
 fn token(input: Span) -> IResult<Span, Token> {
@@ -101,15 +106,13 @@ impl<'src> LexError<'src> {
             LexError::Other(_) => "Lexer error",
         }
     }
-    
+
     pub fn span(&self) -> Option<Span<'src>> {
         match *self {
             LexError::ExtraInput(span) => Some(span),
             LexError::Other(nom::Err::Incomplete(_)) => None,
-            LexError::Other(nom::Err::Error(ref err)) |
-            LexError::Other(nom::Err::Failure(ref err)) => {
-                Some(err.input)
-            },
+            LexError::Other(nom::Err::Error(ref err))
+            | LexError::Other(nom::Err::Failure(ref err)) => Some(err.input),
         }
     }
 }

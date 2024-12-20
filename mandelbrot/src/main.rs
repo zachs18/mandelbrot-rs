@@ -1,39 +1,44 @@
+#![cfg_attr(feature = "f128", feature(f128))]
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
-    str::FromStr, sync::Arc,
+    str::FromStr,
+    sync::Arc,
 };
 
 use blocking::unblock;
-#[cfg(feature = "f128")]
-use f128::f128;
+#[cfg(any(not(feature = "custom_fractals"), not(feature = "f128")))]
+use gtk::traits::ContainerExt;
 use gtk::{
     gdk::{EventMask, EventType},
     gdk_pixbuf::Pixbuf,
     glib::Bytes,
+    pango::Underline,
     prelude::{
-        ApplicationExt, ApplicationExtManual, BuilderExtManual, CssProviderExt,
-        GdkContextExt, WidgetExtManual,
+        ApplicationExt, ApplicationExtManual, BuilderExtManual, CssProviderExt, GdkContextExt,
+        WidgetExtManual,
     },
-    traits::{EntryExt, GtkApplicationExt, StyleContextExt, WidgetExt, ButtonExt, ToggleButtonExt, TextViewExt, TextBufferExt, TextTagTableExt},
-    Application, Builder, CssProvider, DrawingArea, EditableSignals, Entry, Inhibit, StyleContext,
-    Window, Button, RadioButton, TextView, Grid, TextTag, pango::Underline,
+    traits::{
+        ButtonExt, EntryExt, GtkApplicationExt, StyleContextExt, TextBufferExt, TextTagTableExt,
+        TextViewExt, ToggleButtonExt, WidgetExt,
+    },
+    Application, Builder, Button, CssProvider, DrawingArea, EditableSignals, Entry, Grid, Inhibit,
+    RadioButton, StyleContext, TextTag, TextView, Window,
 };
-#[cfg(not(feature = "custom_fractals"))]
-use gtk::traits::ContainerExt;
 use image::RgbImage;
 #[cfg(feature = "custom_fractals")]
 use loader::AssertSendSyncExt;
+#[cfg(feature = "custom_fractals")]
 use loader::LibraryError;
 use num_complex::Complex;
 use num_traits::Zero;
 use watch::local::Watched;
 
-mod generation;
 #[cfg(feature = "custom_fractals")]
 mod custom_fractal;
+mod generation;
 
-use crate::generation::{Config, Precision, generate, Fractal};
+use crate::generation::{generate, Config, Fractal, Precision};
 
 fn main() {
     let config = Config::default();
@@ -65,6 +70,10 @@ fn make_reader_entry<T: FromStr>(entry: &Entry, update_fn: impl Fn(T) + 'static)
             ctx.add_class("bad");
         }
     });
+}
+
+fn assert_num_clone<T: Clone + num_traits::Num>() {
+    let _ = Complex::<T>::zero();
 }
 
 fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
@@ -103,8 +112,10 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
                 self.centerx_entry.set_text(&format!("{}", config.center.0));
                 self.centery_entry.set_text(&format!("{}", config.center.1));
                 self.scale_entry.set_text(&format!("{}", config.zoom));
-                self.max_iterations_entry.set_text(&format!("{}", config.max_iterations));
-                self.hue_scale_entry.set_text(&format!("{}", config.hue_scale));
+                self.max_iterations_entry
+                    .set_text(&format!("{}", config.max_iterations));
+                self.hue_scale_entry
+                    .set_text(&format!("{}", config.hue_scale));
 
                 match config.fractal {
                     Fractal::Mandelbrot => self.mandelbrot_radiobutton.set_active(true),
@@ -135,7 +146,7 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
             }
         }
 
-        get_widgets!{
+        get_widgets! {
             window: Window;
             #[allow(unused_variables)]
             control_grid: Grid;
@@ -170,6 +181,11 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
             control_grid.remove(&custom_fractal_text_view_box);
             control_grid.remove(&custom_fractal_error_view);
             control_grid.set_valign(gtk::Align::Center);
+        }
+
+        #[cfg(not(feature = "f128"))]
+        {
+            control_grid.remove(&f128_radiobutton);
         }
 
         let screen = gtk::gdk::Screen::default().unwrap();
@@ -251,7 +267,10 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
                 move |_this| {
                     state.config.update(|config| {
                         let size = config.size;
-                        *config = Config { size, ..Config::default() };
+                        *config = Config {
+                            size,
+                            ..Config::default()
+                        };
                         true
                     });
                     state.update_widgets();
@@ -264,7 +283,9 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
                 state.$button.connect_toggled({
                     let state = Rc::clone(&state);
                     move |this| {
-                        if !this.is_active() { return; }
+                        if !this.is_active() {
+                            return;
+                        }
                         state.config.update(|config| {
                             config.$field = $value;
                             true
@@ -296,9 +317,7 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
             let state = Rc::clone(&state);
             let buffer = state.custom_fractal_text_view.buffer().unwrap();
             let error_buffer = state.custom_fractal_error_view.buffer().unwrap();
-            let error_tag = TextTag::builder()
-                .underline(Underline::Error)
-                .build();
+            let error_tag = TextTag::builder().underline(Underline::Error).build();
             buffer.tag_table().unwrap().add(&error_tag);
             move || {
                 let ctx = state.custom_fractal_text_view.style_context();
@@ -312,7 +331,9 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
                 ectx.remove_class("unused");
                 ctx.remove_class("unused");
                 state.config.update(|config| {
-                    let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).unwrap();
+                    let text = buffer
+                        .text(&buffer.start_iter(), &buffer.end_iter(), false)
+                        .unwrap();
                     buffer.remove_tag(&error_tag, &buffer.start_iter(), &buffer.end_iter());
                     let handle = match custom_fractal::compile(&text) {
                         Ok(handle) => Arc::new(handle),
@@ -328,27 +349,32 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
                                 buffer.apply_tag(&error_tag, &start_iter, &end_iter);
                             }
                             return false;
-                        },
+                        }
                     };
 
-                    type Callback<T> = extern "C" fn(*mut Complex<T>, *const Complex<T>, *const Complex<T>);
+                    type Callback<T> =
+                        extern "C" fn(*mut Complex<T>, *const Complex<T>, *const Complex<T>);
 
-                    let (single, double, quad) = match (|| Ok::<_, LibraryError>((
-                        handle.sym_func_owned::<Callback<f32>>(loader::c_str!("func32"))?,
-                        handle.sym_func_owned::<Callback<f64>>(loader::c_str!("func64"))?,
-                        handle.sym_func_owned::<Callback<f128>>(loader::c_str!("func128"))?,
-                    )))() {
+                    let funcs = match (|| {
+                        Ok::<_, LibraryError>((
+                            handle.sym_func_owned::<Callback<f32>>(loader::c_str!("func32"))?,
+                            handle.sym_func_owned::<Callback<f64>>(loader::c_str!("func64"))?,
+                            #[cfg(feature = "f128")]
+                            handle.sym_func_owned::<Callback<f128>>(loader::c_str!("func128"))?,
+                        ))
+                    })() {
                         Ok(funcs) => funcs,
                         Err(_) => {
                             error_buffer.set_text("Missing symbols");
                             ctx.add_class("bad");
                             return false;
-                        },
+                        }
                     };
 
-                    let single = unsafe { single.assert_shared().assert_send_sync() };
-                    let double = unsafe { double.assert_shared().assert_send_sync() };
-                    let quad = unsafe { quad.assert_shared().assert_send_sync() };
+                    let single = unsafe { funcs.0.assert_shared().assert_send_sync() };
+                    let double = unsafe { funcs.1.assert_shared().assert_send_sync() };
+                    #[cfg(feature = "f128")]
+                    let quad = unsafe { funcs.2.assert_shared().assert_send_sync() };
 
                     let single = move |c: Complex<f32>| {
                         let single = single.clone();
@@ -356,7 +382,8 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
                             let mut result = Complex::zero();
                             single(&mut result, &c, &z);
                             result
-                        }) as Box<dyn FnMut(Complex<f32>) -> Complex<f32> + 'static>
+                        })
+                            as Box<dyn FnMut(Complex<f32>) -> Complex<f32> + 'static>
                     };
                     let double = move |c: Complex<f64>| {
                         let double = double.clone();
@@ -364,20 +391,24 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
                             let mut result = Complex::zero();
                             double(&mut result, &c, &z);
                             result
-                        }) as Box<dyn FnMut(Complex<f64>) -> Complex<f64> + 'static>
+                        })
+                            as Box<dyn FnMut(Complex<f64>) -> Complex<f64> + 'static>
                     };
+                    #[cfg(feature = "f128")]
                     let quad = move |c: Complex<f128>| {
                         let quad = quad.clone();
                         Box::new(move |z: Complex<f128>| {
                             let mut result = Complex::zero();
                             quad(&mut result, &c, &z);
                             result
-                        }) as Box<dyn FnMut(Complex<f128>) -> Complex<f128> + 'static>
+                        })
+                            as Box<dyn FnMut(Complex<f128>) -> Complex<f128> + 'static>
                     };
 
                     config.fractal = Fractal::Custom {
                         single: Arc::new(single),
                         double: Arc::new(double),
+                        #[cfg(feature = "f128")]
                         quad: Arc::new(quad),
                     };
                     error_buffer.set_text("Okay");
@@ -392,10 +423,14 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
             move |_| custom_fractal_compile()
         });
         #[cfg(feature = "custom_fractals")]
-        state.custom_fractal_text_view.buffer().unwrap().connect_changed({
-            let custom_fractal_compile = custom_fractal_compile.clone();
-            move |_| custom_fractal_compile()
-        });
+        state
+            .custom_fractal_text_view
+            .buffer()
+            .unwrap()
+            .connect_changed({
+                let custom_fractal_compile = custom_fractal_compile.clone();
+                move |_| custom_fractal_compile()
+            });
 
         fn coordinate_convert(
             center: (f64, f64),
@@ -584,9 +619,7 @@ fn build_logic(config: Config) -> impl Fn(&gtk::Application) {
                 loop {
                     let config = match config.watch().await {
                         Ok(config) => config,
-                        Err(_) => {
-                            break
-                        },
+                        Err(_) => break,
                     };
                     progress_text_buffer.set_text("Working...");
                     let img = unblock(move || generate(config)).await;

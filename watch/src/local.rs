@@ -52,10 +52,13 @@ impl<T> Watched<T> {
 
 impl<'a, T: Clone + 'a> Watched<T> {
     pub fn watch(self: &Rc<Self>) -> Watcher<'a, T> {
-        self.watch_with_borrow(Clone::clone, Some(|this| {
-            let this = this as *const _ as *const T;
-            unsafe {&*this}
-        }))
+        self.watch_with_borrow(
+            Clone::clone,
+            Some(|this| {
+                let this = this as *const _ as *const T;
+                unsafe { &*this }
+            }),
+        )
     }
 
     pub fn get(&self) -> T {
@@ -69,8 +72,9 @@ impl<'a, T: 'a> Watched<T> {
     }
 
     fn watch_with_borrow<U, F: Fn(&T) -> U + 'a>(
-        self: &Rc<Self>, func: F,
-        borrow_fn: Option<for<'b> fn(&'b(dyn Exists + 'a)) -> &'b U>,
+        self: &Rc<Self>,
+        func: F,
+        borrow_fn: Option<for<'b> fn(&'b (dyn Exists + 'a)) -> &'b U>,
     ) -> Watcher<'a, U> {
         let inner = self.inner.borrow();
         let generation = inner.generation;
@@ -124,9 +128,7 @@ impl<'a, T> Watcher<'a, T> {
     pub fn with<F: FnOnce(&T) -> R, R>(&self, f: F) -> Result<R, WatchedDropped> {
         let borrow_fn = self.borrow_fn.expect("Cannot call with on mapped Watcher.");
         match self.watched.upgrade() {
-            Some(watched) => {
-                Ok(f(borrow_fn(&*watched)))
-            }
+            Some(watched) => Ok(f(borrow_fn(&*watched))),
             None => Err(WatchedDropped),
         }
     }

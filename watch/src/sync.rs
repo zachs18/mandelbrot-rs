@@ -51,10 +51,13 @@ impl<T> Watched<T> {
 
 impl<'a, T: Send + Sync + Clone + 'a> Watched<T> {
     pub fn watch(self: &Arc<Self>) -> Watcher<'a, T> {
-        self.watch_with_borrow(Clone::clone, Some(|this| {
-            let this = this as *const _ as *const T;
-            unsafe {&*this}
-        }))
+        self.watch_with_borrow(
+            Clone::clone,
+            Some(|this| {
+                let this = this as *const _ as *const T;
+                unsafe { &*this }
+            }),
+        )
     }
 
     pub fn get(&self) -> T {
@@ -63,18 +66,24 @@ impl<'a, T: Send + Sync + Clone + 'a> Watched<T> {
 }
 
 impl<'a, T: Send + Sync + 'a> Watched<T> {
-    pub fn watch_with<U, F: Fn(&T) -> U + Send + Sync + 'a>(self: &Arc<Self>, func: F) -> Watcher<'a, U> {
+    pub fn watch_with<U, F: Fn(&T) -> U + Send + Sync + 'a>(
+        self: &Arc<Self>,
+        func: F,
+    ) -> Watcher<'a, U> {
         self.watch_with_borrow(func, None)
     }
 
     fn watch_with_borrow<U, F: Fn(&T) -> U + Send + Sync + 'a>(
-        self: &Arc<Self>, func: F,
-        borrow_fn: Option<for<'b> fn(&'b(dyn Exists + Send + Sync + 'a)) -> &'b U>,
+        self: &Arc<Self>,
+        func: F,
+        borrow_fn: Option<for<'b> fn(&'b (dyn Exists + Send + Sync + 'a)) -> &'b U>,
     ) -> Watcher<'a, U> {
         let inner = self.inner.read().unwrap();
         let generation = inner.generation;
         let poll_fn: Arc<
-            dyn Fn(&(dyn Exists + Send + Sync + 'a), &mut usize, &mut std::task::Context) -> Poll<U> + Send + Sync,
+            dyn Fn(&(dyn Exists + Send + Sync + 'a), &mut usize, &mut std::task::Context) -> Poll<U>
+                + Send
+                + Sync,
         > = Arc::new(move |this, current_generation, cx| {
             let this = this as *const _ as *const Self;
             let this = unsafe { &*this };
@@ -116,16 +125,19 @@ pub struct Watcher<'a, T> {
     generation: usize,
     watched: Weak<dyn Exists + Send + Sync + 'a>,
     borrow_fn: Option<for<'b> fn(&'b (dyn Exists + Send + Sync + 'a)) -> &'b T>,
-    poll_fn: Arc<dyn Fn(&(dyn Exists + Send + Sync + 'a), &mut usize, &mut std::task::Context) -> Poll<T> + Send + Sync + 'a>,
+    poll_fn: Arc<
+        dyn Fn(&(dyn Exists + Send + Sync + 'a), &mut usize, &mut std::task::Context) -> Poll<T>
+            + Send
+            + Sync
+            + 'a,
+    >,
 }
 
 impl<'a, T> Watcher<'a, T> {
     pub fn with<F: FnOnce(&T) -> R, R>(&self, f: F) -> Result<R, WatchedDropped> {
         let borrow_fn = self.borrow_fn.expect("Cannot call with on mapped Watcher.");
         match self.watched.upgrade() {
-            Some(watched) => {
-                Ok(f(borrow_fn(&*watched)))
-            }
+            Some(watched) => Ok(f(borrow_fn(&*watched))),
             None => Err(WatchedDropped),
         }
     }

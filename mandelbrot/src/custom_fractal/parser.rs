@@ -1,8 +1,14 @@
-use nom::{IResult, multi::{separated_list0, many0, separated_list1}, sequence::{tuple, delimited, preceded, terminated}, Parser, Finish, branch::alt, combinator::{opt, map_res}};
+use nom::{
+    branch::alt,
+    combinator::{map_res, opt},
+    multi::{many0, separated_list0, separated_list1},
+    sequence::{delimited, preceded, terminated, tuple},
+    Finish, IResult, Parser,
+};
 
 use super::{
     lexer::{Token, TokenKind},
-    Op, Component, Span,
+    Component, Op, Span,
 };
 
 pub struct FunctionDefinition<'src> {
@@ -81,8 +87,14 @@ impl<'tok, 'src> nom::error::ParseError<&'tok [Token<'src>]> for ParseError<'tok
     }
 }
 
-impl<'tok, 'src> nom::error::FromExternalError<&'tok [Token<'src>], ParseError<'tok, 'src>> for ParseError<'tok, 'src> {
-    fn from_external_error(_: &'tok [Token<'src>], _: nom::error::ErrorKind, e: ParseError<'tok, 'src>) -> Self {
+impl<'tok, 'src> nom::error::FromExternalError<&'tok [Token<'src>], ParseError<'tok, 'src>>
+    for ParseError<'tok, 'src>
+{
+    fn from_external_error(
+        _: &'tok [Token<'src>],
+        _: nom::error::ErrorKind,
+        e: ParseError<'tok, 'src>,
+    ) -> Self {
         e
     }
 }
@@ -101,24 +113,22 @@ fn literal<'tok, 'src>(
 
 fn op(
     op: Op,
-) -> impl for<'tok, 'src> FnMut(&'tok [Token<'src>]) -> IResult<&'tok [Token<'src>], Op, ParseError<'tok, 'src>>
-{
+) -> impl for<'tok, 'src> FnMut(
+    &'tok [Token<'src>],
+) -> IResult<&'tok [Token<'src>], Op, ParseError<'tok, 'src>> {
     move |input| token_kind(TokenKind::Op(op)).map(|_| op).parse(input)
 }
 
 #[inline]
 fn token_kind(
     kind: TokenKind,
-) -> impl for<'tok, 'src> FnMut(&'tok [Token<'src>]) -> IResult<&'tok [Token<'src>], Token<'src>, ParseError<'tok, 'src>>
-{
+) -> impl for<'tok, 'src> FnMut(
+    &'tok [Token<'src>],
+) -> IResult<&'tok [Token<'src>], Token<'src>, ParseError<'tok, 'src>> {
     move |input| match input.split_first() {
         Some((token, rest)) if token.0 == kind => Ok((rest, *token)),
-        Some((token, _)) => Err(nom::Err::Error(
-            ParseError::TokenKind(kind, Some(*token))
-        )),
-        None => Err(nom::Err::Error(
-            ParseError::TokenKind(kind, None)
-        )),
+        Some((token, _)) => Err(nom::Err::Error(ParseError::TokenKind(kind, Some(*token)))),
+        None => Err(nom::Err::Error(ParseError::TokenKind(kind, None))),
     }
 }
 
@@ -136,9 +146,9 @@ fn function_definition<'tok, 'src>(
         ),
         op(Op::Assign),
         expression,
-    )).map(|(name, args, _, body)| {
-        FunctionDefinition { name, args, body }
-    }).parse(input)
+    ))
+    .map(|(name, args, _, body)| FunctionDefinition { name, args, body })
+    .parse(input)
 }
 
 /// Precedence
@@ -170,15 +180,14 @@ fn add_expression<'tok, 'src>(
 ) -> IResult<&'tok [Token<'src>], Expression<'src>, ParseError<'tok, 'src>> {
     let add_op = alt((op(Op::Plus), op(Op::Minus)));
     let add_tail = tuple((add_op, multiply_expression));
-    tuple((
-        multiply_expression,
-        many0(add_tail),
-    )).map(|(mut lhs, tail)| {
-        for (op, rhs) in tail {
-            lhs = Expression::BinOp(lhs.into(), op, rhs.into())
-        }
-        lhs
-    }).parse(input)
+    tuple((multiply_expression, many0(add_tail)))
+        .map(|(mut lhs, tail)| {
+            for (op, rhs) in tail {
+                lhs = Expression::BinOp(lhs.into(), op, rhs.into())
+            }
+            lhs
+        })
+        .parse(input)
 }
 
 fn multiply_expression<'tok, 'src>(
@@ -186,15 +195,14 @@ fn multiply_expression<'tok, 'src>(
 ) -> IResult<&'tok [Token<'src>], Expression<'src>, ParseError<'tok, 'src>> {
     let mul_op = alt((op(Op::Times), op(Op::Divide)));
     let mul_tail = tuple((mul_op, unary_prefix_expression));
-    tuple((
-        unary_prefix_expression,
-        many0(mul_tail),
-    )).map(|(mut lhs, tail)| {
-        for (op, rhs) in tail {
-            lhs = Expression::BinOp(lhs.into(), op, rhs.into())
-        }
-        lhs
-    }).parse(input)
+    tuple((unary_prefix_expression, many0(mul_tail)))
+        .map(|(mut lhs, tail)| {
+            for (op, rhs) in tail {
+                lhs = Expression::BinOp(lhs.into(), op, rhs.into())
+            }
+            lhs
+        })
+        .parse(input)
 }
 
 fn unary_prefix_expression<'tok, 'src>(
@@ -202,15 +210,14 @@ fn unary_prefix_expression<'tok, 'src>(
 ) -> IResult<&'tok [Token<'src>], Expression<'src>, ParseError<'tok, 'src>> {
     let unary_prefix_op = alt((op(Op::Minus), op(Op::Conjugate)));
     let unary_prefix_tail = call_or_field_expression;
-    tuple((
-        many0(unary_prefix_op),
-        unary_prefix_tail,
-    )).map(|(ops, mut tail)| {
-        for op in ops {
-            tail = Expression::UnaryOp(op, tail.into())
-        }
-        tail
-    }).parse(input)
+    tuple((many0(unary_prefix_op), unary_prefix_tail))
+        .map(|(ops, mut tail)| {
+            for op in ops {
+                tail = Expression::UnaryOp(op, tail.into())
+            }
+            tail
+        })
+        .parse(input)
 }
 
 fn call_or_field_expression<'tok, 'src>(
@@ -227,31 +234,28 @@ fn call_or_field_expression<'tok, 'src>(
     ) -> IResult<&'tok [Token<'src>], Vec<Expression<'src>>, ParseError<'tok, 'src>> {
         delimited(
             token_kind(TokenKind::LParen),
-            opt(
-                terminated(
-                    separated_list1(token_kind(TokenKind::Comma), expression),
-                    opt(token_kind(TokenKind::Comma)),
-                )
-            ),
+            opt(terminated(
+                separated_list1(token_kind(TokenKind::Comma), expression),
+                opt(token_kind(TokenKind::Comma)),
+            )),
             token_kind(TokenKind::RParen),
-        ).map(
-            Option::unwrap_or_default
-        ).parse(input)
+        )
+        .map(Option::unwrap_or_default)
+        .parse(input)
     }
 
     fn component<'tok, 'src>(
         input: &'tok [Token<'src>],
     ) -> IResult<&'tok [Token<'src>], Component, ParseError<'tok, 'src>> {
         map_res(
-            preceded(
-                token_kind(TokenKind::Period), ident
-            ),
+            preceded(token_kind(TokenKind::Period), ident),
             |field| match *field.fragment() {
                 "re" | "real" => Ok(Component::Real),
                 "im" | "imag" => Ok(Component::Imag),
                 _ => Err(ParseError::InvalidField(field)),
-            }
-        ).parse(input)
+            },
+        )
+        .parse(input)
     }
 
     map_res(
@@ -259,44 +263,46 @@ fn call_or_field_expression<'tok, 'src>(
             unit_expression,
             many0(alt((
                 call_tail.map(CallOrFieldTail::CallTail),
-                tuple((
-                    preceded(
-                        token_kind(TokenKind::Period), ident
-                    ),
-                    call_tail,
-                )).map(|(method, args)| CallOrFieldTail::MethodTail(method, args)),
-                component.map(CallOrFieldTail::Component))
-            )),
+                tuple((preceded(token_kind(TokenKind::Period), ident), call_tail))
+                    .map(|(method, args)| CallOrFieldTail::MethodTail(method, args)),
+                component.map(CallOrFieldTail::Component),
+            ))),
         )),
         |(mut expr, tails)| {
             for tail in tails {
                 expr = match tail {
-                    CallOrFieldTail::CallTail(args) => {
-                        match expr {
-                            Expression::Variable(func) => Expression::FunctionCall(func, args),
-                            _ => return Err(ParseError::InvalidFunction(expr)),
-                        }
+                    CallOrFieldTail::CallTail(args) => match expr {
+                        Expression::Variable(func) => Expression::FunctionCall(func, args),
+                        _ => return Err(ParseError::InvalidFunction(expr)),
                     },
                     CallOrFieldTail::MethodTail(method, mut args) => {
                         args.insert(0, expr);
                         Expression::FunctionCall(method, args)
-                    },
-                    CallOrFieldTail::Component(component) => Expression::Component(expr.into(), component),
+                    }
+                    CallOrFieldTail::Component(component) => {
+                        Expression::Component(expr.into(), component)
+                    }
                 };
             }
             Ok(expr)
-        }
-    ).parse(input)
+        },
+    )
+    .parse(input)
 }
 
 fn unit_expression<'tok, 'src>(
     input: &'tok [Token<'src>],
 ) -> IResult<&'tok [Token<'src>], Expression<'src>, ParseError<'tok, 'src>> {
     alt((
-        delimited(token_kind(TokenKind::LParen), expression, token_kind(TokenKind::RParen)),
+        delimited(
+            token_kind(TokenKind::LParen),
+            expression,
+            token_kind(TokenKind::RParen),
+        ),
         ident.map(|ident| Expression::Variable(ident)),
         literal.map(|literal| Expression::Literal(literal)),
-    )).parse(input)
+    ))
+    .parse(input)
 }
 
 pub(super) fn parse_tokens<'tok, 'src>(
